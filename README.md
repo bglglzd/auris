@@ -161,6 +161,10 @@ src/         React 19 + TypeScript UI (Memiro design system in App.css)
 docs/        release runbook, status, screenshots
 ```
 
+## Found a bug?
+
+Use **Report a bug** — the 🐞 button at the bottom of the sidebar, *Settings → Errors and diagnostics*, the tray menu, or *Help → Report a bug* on macOS. Describe what happened; Memiro adds the version, the system and a diagnostic log with personal data removed (no API keys, no user names in paths, no meeting text — you can see exactly what is sent). The report opens as a ready-to-submit [GitHub issue](https://github.com/bglglzd/auris/issues); without a GitHub account you can copy it or save it as a file. Reports are triaged and fixed on a regular schedule, and fixes arrive as updates. Error messages in the app have a «Report a bug» link that pre-fills the form.
+
 ## Releases
 
 Every release is signed and published on [GitHub Releases](https://github.com/bglglzd/auris/releases) together with `latest.json` for in-app updates. See [CHANGELOG.md](CHANGELOG.md) for what changed and [docs/RELEASE.md](docs/RELEASE.md) for the release process.

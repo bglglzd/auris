@@ -3,6 +3,19 @@
 All notable changes to Memiro AI. Versions follow [Semantic Versioning](https://semver.org/);
 installers for every version are on [GitHub Releases](https://github.com/bglglzd/auris/releases).
 
+## [0.11.0] — 2026-10-01
+
+### Added
+- **Report a bug** on Windows and macOS: describe the problem, choose how much it gets in the way and how often, and send — Memiro opens a ready-to-submit GitHub issue with the version, the system and a diagnostic log (personal data removed: API keys, tokens, e-mails, user names in paths; no meeting text). Copy or save the report as a file if you have no GitHub account. «My reports» keeps the history. Available from the sidebar (🐞), Settings → Errors and diagnostics, the tray menu, Help → Report a bug on macOS, and from error messages (pre-filled).
+- Bug reports are triaged and fixed on a weekly schedule; fixes ship as regular updates.
+
+### Fixed
+- macOS: primary buttons (Save, Ask, Save file…) were invisible — white text on a white background in the light theme and dark-on-dark in the dark theme.
+- macOS: the sidebar took the system's light/dark material instead of the app theme, so in the dark theme it looked grey and different from the rest of the window. The window now follows the app theme, and the sidebar uses the Memiro navy/light tint.
+- Notifications no longer cover dialog buttons (they now sit under open dialogs).
+- Dark theme: better contrast on the selected «Auto» voice-count button.
+- Windows: the title bar follows the app's light/dark theme.
+
 ## [0.10.0] — 2026-09-26
 
 ### Changed
@@ -115,6 +128,7 @@ installers for every version are on [GitHub Releases](https://github.com/bglglzd
 ## Earlier
 - Two-track recording (microphone + system audio), local Whisper transcription, meeting library, import of external recordings, speaker diarization, AI summaries and questions via an OpenAI-compatible endpoint.
 
+[0.11.0]: https://github.com/bglglzd/auris/releases/tag/v0.11.0
 [0.10.0]: https://github.com/bglglzd/auris/releases/tag/v0.10.0
 [0.9.0]: https://github.com/bglglzd/auris/releases/tag/v0.9.0
 [0.8.2]: https://github.com/bglglzd/auris/releases/tag/v0.8.2

@@ -18,10 +18,25 @@ export function getTheme(): Theme {
   return "dark";
 }
 
-/// Применяет тему к документу (через data-theme на <html>).
+/// Применяет тему к документу (через data-theme на <html>) и к окну.
 export function applyTheme(theme: Theme): void {
   if (typeof document !== "undefined") {
     document.documentElement.dataset.theme = theme;
+  }
+  void syncWindowTheme(theme);
+}
+
+/// Тема нативного окна = тема приложения. На macOS от неё зависит материал
+/// вибрации под полупрозрачной боковой панелью (иначе он берётся из системы:
+/// тёмная тема приложения при светлой системе давала светло-серую панель), на
+/// Windows — цвет заголовка окна. Вне Tauri (vite dev, тесты) — ничего.
+async function syncWindowTheme(theme: Theme): Promise<void> {
+  if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return;
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    await getCurrentWindow().setTheme(theme);
+  } catch {
+    /* нет окна/прав — оставляем системную тему */
   }
 }
 

@@ -7,6 +7,7 @@ import { MemiroMark } from "./MemiroMark";
 import type { MeetingPatch } from "./MeetingEditDialog";
 import { useAppMenu } from "../appmenu";
 import { isMac } from "../platform";
+import { openBugReport } from "../bugreport";
 
 interface Props {
   meetings: Meeting[];
@@ -185,6 +186,19 @@ export function Sidebar(p: Props) {
               ☾
             </button>
           </div>
+          <button
+            type="button"
+            className="bug-trigger"
+            onClick={() => openBugReport()}
+            title="Сообщить об ошибке"
+            aria-label="Сообщить об ошибке"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="8" y="7" width="8" height="12" rx="4" />
+              <path d="M9.5 7a2.5 2.5 0 0 1 5 0" />
+              <path d="M4 12h4M16 12h4M5 17l3-1.5M19 17l-3-1.5M5 7l3 1.5M19 7l-3 1.5" />
+            </svg>
+          </button>
           <button className="settings-trigger" onClick={p.onOpenSettings}>
             ⚙ Настройки
           </button>

@@ -140,6 +140,58 @@ pub fn platform() -> &'static str {
     std::env::consts::OS
 }
 
+/// Сведения о системе для отчёта об ошибке: ОС, её версия, архитектура.
+#[derive(Clone, serde::Serialize)]
+pub struct SystemInfo {
+    pub os: String,
+    pub os_version: String,
+    pub arch: String,
+}
+
+#[tauri::command]
+pub fn system_info() -> SystemInfo {
+    SystemInfo {
+        os: std::env::consts::OS.to_string(),
+        os_version: os_version().unwrap_or_default(),
+        arch: std::env::consts::ARCH.to_string(),
+    }
+}
+
+/// Версия ОС: на macOS — `sw_vers` (15.1), на Windows — `ver` (10.0.26100.x;
+/// сборка ≥ 22000 — это Windows 11). Без консольного окна.
+fn os_version() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        let out = std::process::Command::new("sw_vers").arg("-productVersion").output().ok()?;
+        Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let out = std::process::Command::new("cmd")
+            .args(["/C", "ver"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        // «Microsoft Windows [Version 10.0.26100.1]» / «[Версия …]» — язык не важен.
+        let inner = text.split('[').nth(1)?.split(']').next()?;
+        let ver = inner.split_whitespace().last()?.to_string();
+        let build: u32 = ver.split('.').nth(2).and_then(|b| b.parse().ok()).unwrap_or(0);
+        let name = if build >= 22000 { "Windows 11" } else { "Windows 10" };
+        Some(format!("{name} ({ver})"))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        std::fs::read_to_string("/etc/os-release").ok().and_then(|s| {
+            s.lines()
+                .find_map(|l| l.strip_prefix("PRETTY_NAME="))
+                .map(|v| v.trim_matches('"').to_string())
+        })
+    }
+}
+
 /// Разрешения macOS для записи: микрофон спрашивает сама система, а доступ к
 /// системному звуку («Запись экрана и системного звука») — проверяем здесь.
 /// `request = true` — показать системный запрос. На других ОС всегда `true`.

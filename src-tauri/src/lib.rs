@@ -116,8 +116,9 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     let toggle_i = MenuItem::with_id(app, "toggle", "Старт/Стоп записи", true, None::<&str>)?;
     let open_i = MenuItem::with_id(app, "open", "Открыть Memiro", true, None::<&str>)?;
+    let bug_i = MenuItem::with_id(app, "bug", "Сообщить об ошибке…", true, None::<&str>)?;
     let quit_i = MenuItem::with_id(app, "quit", "Выход", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&toggle_i, &open_i, &quit_i])?;
+    let menu = Menu::with_items(app, &[&toggle_i, &open_i, &bug_i, &quit_i])?;
 
     // На macOS — монохромный шаблон: строка меню сама красит его под тему.
     #[cfg(target_os = "macos")]
@@ -139,6 +140,14 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             "toggle" => toggle_and_notify(app),
+            "bug" => {
+                use tauri::Emitter;
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+                let _ = app.emit("app-menu", "bug");
+            }
             _ => {}
         })
         .build(app)?;
@@ -227,13 +236,16 @@ fn setup_mac_menu(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .close_window()
         .build()?;
 
+    let bug = MenuItemBuilder::with_id("bug", "Сообщить об ошибке…").build(app)?;
+    let help_menu = SubmenuBuilder::new(app, "Справка").item(&bug).build()?;
+
     let menu = MenuBuilder::new(app)
-        .items(&[&app_menu, &file_menu, &edit_menu, &view_menu, &window_menu])
+        .items(&[&app_menu, &file_menu, &edit_menu, &view_menu, &window_menu, &help_menu])
         .build()?;
     app.set_menu(menu)?;
     app.on_menu_event(|app, event| match event.id.as_ref() {
         "record" => toggle_and_notify(app),
-        id @ ("settings" | "updates" | "solo" | "import" | "find" | "theme") => {
+        id @ ("settings" | "updates" | "solo" | "import" | "find" | "theme" | "bug") => {
             use tauri::Manager;
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.show();
@@ -471,6 +483,7 @@ pub fn run() {
             commands::update_meeting_notes,
             commands::ai_check,
             commands::platform,
+            commands::system_info,
             commands::system_audio_access,
             commands::open_privacy_settings,
             update_hotkey,

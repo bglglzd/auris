@@ -212,6 +212,10 @@ export const api = {
   systemAudioAccess: (request = false): Promise<boolean> =>
     inv("system_audio_access", { request }),
 
+  /// ОС, её версия и архитектура — для отчёта об ошибке.
+  systemInfo: (): Promise<{ os: string; os_version: string; arch: string }> =>
+    inv("system_info"),
+
   /// macOS: открыть раздел «Конфиденциальность и безопасность».
   openPrivacySettings: (kind: "screen" | "mic"): Promise<void> =>
     inv("open_privacy_settings", { kind }),

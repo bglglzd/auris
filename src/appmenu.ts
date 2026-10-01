@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 
 /// Пункты строки меню macOS, которые ведёт фронтенд (см. `setup_mac_menu`).
-export type AppMenuId = "settings" | "updates" | "solo" | "import" | "find" | "theme";
+export type AppMenuId = "settings" | "updates" | "solo" | "import" | "find" | "theme" | "bug";
 
 const EVENT = "memiro-menu";
 let started = false;
