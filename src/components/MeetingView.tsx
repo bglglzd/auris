@@ -9,6 +9,8 @@ import { activeSegmentIndex } from "../playback";
 import { clock, transcriptToPlain } from "../export";
 import { mergeSpeakers, renumberSpeakers } from "../speakers";
 import { REPORTS_EVENT } from "../reports";
+import { applyPolicy } from "../profanity";
+import { profanityPolicy, SETTINGS_EVENT } from "../settings";
 import { TranscriptView } from "./TranscriptView";
 import { SpeakersPanel } from "./SpeakersPanel";
 import { ExportModal } from "./ExportModal";
@@ -51,6 +53,14 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
   const [error, setError] = useState("");
   // Правка расшифровки: черновик живёт отдельно, пишется в файл по «Сохранить».
   const [editing, setEditing] = useState(false);
+  // Политика нецензурной лексики: расшифровка хранится дословно, показ,
+  // копия и экспорт — по политике (меняется в настройках на лету).
+  const [policy, setPolicy] = useState(() => profanityPolicy());
+  useEffect(() => {
+    const on = () => setPolicy(profanityPolicy());
+    window.addEventListener(SETTINGS_EVENT, on);
+    return () => window.removeEventListener(SETTINGS_EVENT, on);
+  }, []);
   const [draft, setDraft] = useState<Transcript | null>(null);
 
   const [playing, setPlaying] = useState(false);
@@ -361,6 +371,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
 
   const pct = duration > 0 ? (time / duration) * 100 : 0;
   const hasTranscript = !!transcript && transcript.segments.length > 0;
+  const shown = useMemo(() => (transcript ? applyPolicy(transcript, policy) : null), [transcript, policy]);
 
   // Соло-режим расшифровывает только микрофон одним голосом — выбор числа
   // собеседников не нужен. Вызов передаёт флаг соло в бэкенд.
@@ -601,7 +612,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
               </button>
               <CopyButton
                 className="btn ghost icon-btn"
-                text={() => transcriptToPlain(transcript!, nameOf)}
+                text={() => transcriptToPlain(shown!, nameOf)}
                 label="📋"
                 doneLabel="✓"
                 title="Скопировать текст расшифровки без Markdown"
@@ -664,7 +675,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
           )}
           {notice && <p className="hint voices-notice">{notice}</p>}
           <TranscriptView
-            transcript={editing ? draft : transcript}
+            transcript={editing ? draft : shown}
             activeIndex={activeIndex}
             labels={labels}
             onSeek={seek}
@@ -689,7 +700,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
       {showExport && (
         <ExportModal
           meeting={meeting}
-          transcript={transcript}
+          transcript={shown}
           reports={reports}
           nameOf={nameOf}
           onClose={() => setShowExport(false)}

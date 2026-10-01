@@ -148,14 +148,30 @@ impl WhisperTranscriber {
         on_progress: &dyn Fn(usize, usize),
     ) -> AppResult<Vec<Segment>> {
         let audio = Self::read_wav_as_f32(wav_path)?;
+        Ok(self.transcribe_audio(&audio, window_secs, on_progress)?.0)
+    }
+
+    /// Расшифровка отрывка (16 кГц моно f32) с оценкой: средняя вероятность
+    /// токенов текста (`None` — текста нет).
+    pub fn transcribe_samples(&self, samples: &[f32]) -> AppResult<(Vec<Segment>, Option<f32>)> {
+        self.transcribe_audio(samples, DEFAULT_WINDOW_SECS, &|_, _| {})
+    }
+
+    fn transcribe_audio(
+        &self,
+        audio: &[f32],
+        window_secs: usize,
+        on_progress: &dyn Fn(usize, usize),
+    ) -> AppResult<(Vec<Segment>, Option<f32>)> {
+        let (mut prob_sum, mut prob_n) = (0.0f32, 0usize);
         if audio.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), None));
         }
 
         let ctx = &self.ctx;
         let win = window_secs.max(1) * SAMPLE_RATE;
         // Окна режем в паузах (не посреди слова): ищем тишину в последних 10 с.
-        let chunks = crate::audio::quiet_chunks(&audio, win, 10 * SAMPLE_RATE, SAMPLE_RATE / 5);
+        let chunks = crate::audio::quiet_chunks(audio, win, 10 * SAMPLE_RATE, SAMPLE_RATE / 5);
         let total = chunks.len().max(1);
         let mut segments = Vec::new();
 
@@ -231,6 +247,17 @@ impl WhisperTranscriber {
                 if b > a && rms(&chunk[a..b]) < SILENCE_RMS {
                     continue;
                 }
+                // Уверенность: вероятности текстовых токенов (служебные
+                // [_BEG_], [_TT_…] и т.п. не считаем).
+                for k in 0..seg.n_tokens() {
+                    if let Some(tok) = seg.get_token(k) {
+                        let is_text = tok.to_str_lossy().map(|t| !t.trim_start().starts_with("[_")).unwrap_or(false);
+                        if is_text {
+                            prob_sum += tok.token_probability();
+                            prob_n += 1;
+                        }
+                    }
+                }
                 segments.push(Segment {
                     start_secs: offset + t0c as f64 / 100.0,
                     end_secs: offset + t1c as f64 / 100.0,
@@ -239,7 +266,7 @@ impl WhisperTranscriber {
             }
             on_progress(i + 1, total);
         }
-        Ok(segments)
+        Ok((segments, (prob_n > 0).then(|| prob_sum / prob_n as f32)))
     }
 }
 

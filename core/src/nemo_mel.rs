@@ -19,7 +19,7 @@ pub fn num_frames(n: usize) -> usize {
 
 // ---------- FFT (радикс-2, на месте) ----------
 
-fn fft(re: &mut [f64], im: &mut [f64]) {
+pub(crate) fn fft(re: &mut [f64], im: &mut [f64]) {
     let n = re.len();
     let mut j = 0;
     for i in 1..n {

@@ -555,6 +555,9 @@ pub struct MeetingContext {
     /// Имена говорящих, заданные пользователем: id ("me", "spk0"…) → имя.
     #[serde(default)]
     pub names: std::collections::HashMap<String, String>,
+    /// Скрывать нецензурную лексику в тексте для ИИ (политика из настроек).
+    #[serde(default)]
+    pub censor: bool,
 }
 
 impl MeetingContext {
@@ -927,6 +930,7 @@ mod tests {
             title: "Бюджет".into(),
             participants: "Иван".into(),
             names: Default::default(),
+            censor: false,
         };
         let out = generate_report(&b, "summary", "Иван: привет", &ctx).unwrap();
         assert_eq!(out, "## Коротко\nок");

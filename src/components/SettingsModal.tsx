@@ -443,6 +443,24 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                 только на этом устройстве.
               </span>
             </div>
+            <div className="field">
+              <label htmlFor="asr-profanity">Нецензурная лексика</label>
+              <select
+                id="asr-profanity"
+                value={s.profanity === "verbatim" ? "verbatim" : "censor"}
+                onChange={(e) => setS({ ...s, profanity: e.target.value === "verbatim" ? "verbatim" : "censor" })}
+              >
+                <option value="censor">Скрывать — «[нецензурно]»</option>
+                <option value="verbatim">Дословно, без цензуры</option>
+              </select>
+              <span className="hint">
+                {s.profanity === "verbatim"
+                  ? "Слова записываются ровно так, как произнесены, — для юридической и журналистской расшифровки."
+                  : "Вместо мата — пометка «[нецензурно]», как в официальных стенограммах."}{" "}
+                Запись хранится дословно: политика применяется к показу, копированию, экспорту и тексту для
+                ИИ и меняется в любой момент.
+              </span>
+            </div>
             <details className="adv">
               <summary>Использовать свой whisper (необязательно)</summary>
               <div className="field">
