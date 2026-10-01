@@ -111,13 +111,25 @@ Windows, `#[cfg(windows)]`), `mac_recorder` (macOS: микрофон через 
 
 ### Запись (macOS, v0.9)
 `mac_recorder.rs`: `mic.wav` — cpal (CoreAudio, поток в своём треде, любая частота
-→ `TrackSink`); `system.wav` — ScreenCaptureKit (macOS 13+, аудио 16 кГц моно,
-`excludes_current_process_audio`). Нужны разрешения: микрофон (Info.plist
-`NSMicrophoneUsageDescription`) и «Запись экрана и системного звука»
-(`CGPreflight/RequestScreenCaptureAccess`). Без второго запись идёт только с
-микрофона: `Recorder::warning()` → событие `recording-warning` → тост во фронте;
-статус и кнопка — `MacPermissions` в настройках (команды `system_audio_access`,
-`open_privacy_settings`). Авто-запись на Mac скрыта (детектор — только WASAPI).
+→ `TrackSink`); `system.wav` — **macOS 14.2+: Core Audio process tap**
+(`mac_audiotap.rs`: `CATapDescription` моно без своего процесса → приватное
+агрегатное устройство → IOProc; функции tap через `dlsym` — на 13 не падает;
+разрешение «Только запись системного звука», `NSAudioCaptureUsageDescription`),
+иначе/при ошибке — ScreenCaptureKit («Запись экрана и системного звука»).
+`TrackSink`/`StreamResampler` — оконный sinc (Блэкман) → 16 кГц, без алиасинга.
+Статусы: микрофон — `AVCaptureDevice`, системный звук — `TCCAccessPreflight`
+(TCC.framework через dlopen; нет — `unknown`). Команды `mac_permissions`,
+`request_mic_access`, `request_system_audio_access`, `open_privacy_settings`.
+Фронт: `MacSetup` («Подготовка Mac» при первом запуске, флаг
+`3uxo.macsetup.done`, событие `memiro-mac-setup`) и `MacPermissions` в
+настройках. Уведомления на Mac по умолчанию выкл (`settings.notifications`,
+команды `set_notifications`/`test_notification`). Без доступа — запись с
+микрофона + `recording-warning`. Авто-запись на Mac скрыта (детектор — WASAPI).
+**Подпись**: секреты `MACOS_CERT_P12`/`MACOS_CERT_PASSWORD` (самоподписанный,
+`scripts/make-macos-signing-cert.sh`) → `scripts/import-macos-signing-cert.sh` →
+`APPLE_SIGNING_IDENTITY`; стабильная подпись = разрешения не сбрасываются.
+Проверка mac-кода без Mac: `rustup target add aarch64-apple-darwin` + отдельный
+крейт с модулем (cpal/screencapturekit требуют Xcode).
 
 ### Импорт
 `service::import_to_meeting` → `decode_to_wav_16k_mono(src, audio.wav)` (symphonia

@@ -33,3 +33,5 @@ pub mod wasapi_recorder;
 /// Захват звука на macOS (CoreAudio + ScreenCaptureKit).
 #[cfg(target_os = "macos")]
 pub mod mac_recorder;
+#[cfg(target_os = "macos")]
+pub mod mac_audiotap;

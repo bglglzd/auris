@@ -111,7 +111,11 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
   };
 
   const save = async () => {
+    const wasNotify = getSettings().notifications;
     saveSettings(s);
+    // Уведомления: включили — пробное уведомление (на Mac заодно запрос).
+    void api.setNotifications(s.notifications).catch(() => {});
+    if (s.notifications && !wasNotify) void api.testNotification().catch(() => {});
     // Сразу применяем горячую клавишу (рантайм-регистрация).
     try {
       await api.updateHotkey(s.hotkey);
@@ -192,7 +196,26 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                 {isMac ? "в строке меню" : "в трее"}.
               </span>
             </div>
-            {isMac && <MacPermissions />}
+            <div className="row-switch">
+              <div>
+                <div className="row-switch-title">Уведомления о записи</div>
+                <div className="hint">
+                  Системные уведомления о начале и конце записи — удобно, когда
+                  запись запускают горячей клавишей.
+                  {isMac ? " macOS спросит разрешение." : ""}
+                </div>
+              </div>
+              <Switch
+                on={s.notifications}
+                onChange={(v) => setS({ ...s, notifications: v })}
+                label="Уведомления о записи"
+              />
+            </div>
+            {isMac && (
+              <MacPermissions
+                onOpenSetup={() => window.dispatchEvent(new Event("memiro-mac-setup"))}
+              />
+            )}
           </div>
         </details>
 

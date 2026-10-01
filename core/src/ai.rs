@@ -860,6 +860,31 @@ mod tests {
     }
 
     /// Поднимает локальный HTTP-сервер, отвечающий OpenAI-подобным JSON.
+    /// Читает HTTP-запрос целиком: заголовки и тело по Content-Length (тело
+    /// может прийти отдельным пакетом).
+    fn read_request(stream: &mut std::net::TcpStream) -> String {
+        let mut data: Vec<u8> = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            let n = stream.read(&mut buf).unwrap_or(0);
+            if n == 0 {
+                break;
+            }
+            data.extend_from_slice(&buf[..n]);
+            let text = String::from_utf8_lossy(&data).to_string();
+            if let Some(h) = text.find("\r\n\r\n") {
+                let len = text[..h]
+                    .lines()
+                    .find_map(|l| l.to_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0)))
+                    .unwrap_or(0);
+                if data.len() >= h + 4 + len {
+                    break;
+                }
+            }
+        }
+        String::from_utf8_lossy(&data).to_string()
+    }
+
     fn spawn_mock_server(content: &str) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -869,8 +894,9 @@ mod tests {
         );
         thread::spawn(move || {
             if let Ok((mut stream, _)) = listener.accept() {
-                let mut buf = [0u8; 2048];
-                let _ = stream.read(&mut buf);
+                // Весь запрос до ответа: иначе непрочитанное тело при закрытии
+                // сокета даёт RST, и клиент (на macOS) падает с os error 22.
+                let _ = read_request(&mut stream);
                 let resp = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                     body.len(),
@@ -977,27 +1003,7 @@ mod tests {
         thread::spawn(move || {
             for stream in listener.incoming().take(6) {
                 let Ok(mut stream) = stream else { continue };
-                // Читаем заголовки и тело целиком (тело может прийти отдельно).
-                let mut data: Vec<u8> = Vec::new();
-                let mut buf = [0u8; 4096];
-                loop {
-                    let n = stream.read(&mut buf).unwrap_or(0);
-                    if n == 0 {
-                        break;
-                    }
-                    data.extend_from_slice(&buf[..n]);
-                    let text = String::from_utf8_lossy(&data).to_string();
-                    if let Some(h) = text.find("\r\n\r\n") {
-                        let len = text[..h]
-                            .lines()
-                            .find_map(|l| l.to_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0)))
-                            .unwrap_or(0);
-                        if data.len() >= h + 4 + len {
-                            break;
-                        }
-                    }
-                }
-                let req = String::from_utf8_lossy(&data).to_string();
+                let req = read_request(&mut stream);
                 seen2.lock().unwrap().push(req.lines().next().unwrap_or("").to_string());
                 let (status, body) = if req.starts_with("GET /models") {
                     ("200 OK", models.to_string())

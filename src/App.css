@@ -4021,3 +4021,41 @@ details.adv[open] summary::before {
 .error-banner .link-btn {
   white-space: nowrap;
 }
+
+/* ---------- Подготовка Mac ---------- */
+.mac-setup {
+  width: min(560px, 100%);
+}
+.mac-setup-head {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+.mac-setup-head h2 {
+  margin: 0 0 4px;
+}
+.mac-setup-head .lead {
+  margin: 0;
+}
+.mac-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.mac-notify {
+  margin-top: 4px;
+}
+.perm-ok {
+  flex: none;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--teal-ink);
+}
+.perm-dot.bad {
+  background: var(--rec);
+}
+.mac-perms .link-btn {
+  align-self: flex-start;
+}

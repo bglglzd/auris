@@ -110,6 +110,20 @@ jobs:
           brew install cmake autoconf automake libtool || true
           autoreconf --version | head -1 && cmake --version | head -1
           scripts/fetch-onnxruntime-macos.sh ${{ matrix.arch }}
+      # Постоянная бесплатная подпись (самоподписанный сертификат из секретов
+      # MACOS_CERT_P12 / MACOS_CERT_PASSWORD, см. scripts/make-macos-signing-cert.sh):
+      # macOS узнаёт приложение после обновления и не спрашивает разрешения
+      # заново. Без секретов — ad-hoc, как раньше.
+      - name: Signing identity (self-signed, optional)
+        env:
+          P12_BASE64: ${{ secrets.MACOS_CERT_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          if [ -n "$P12_BASE64" ] && [ -n "$P12_PASSWORD" ]; then
+            scripts/import-macos-signing-cert.sh
+          else
+            echo "MACOS_CERT_P12 не задан — подпись ad-hoc"
+          fi
       # Подпись: ad-hoc (signingIdentity "-" в tauri.macos.conf.json). Для
       # Apple Developer ID добавьте секреты APPLE_CERTIFICATE,
       # APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY, APPLE_ID,

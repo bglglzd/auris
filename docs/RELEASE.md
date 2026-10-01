@@ -66,6 +66,23 @@ signed; for Developer ID signing and notarization add the `APPLE_*` secrets list
 After a release check that `latest.json` lists `windows-x86_64`, `darwin-aarch64` and
 `darwin-x86_64`.
 
+## macOS signing (free, stable)
+
+Without a signing certificate macOS builds are ad-hoc signed: every build has a new
+signature, so macOS asks for microphone and system-audio access again after each update.
+A free self-signed certificate keeps the signature stable:
+
+1. Run `scripts/make-macos-signing-cert.sh` once (macOS, Linux or Git Bash; needs `openssl`).
+2. In GitHub → Settings → Secrets and variables → Actions add `MACOS_CERT_P12` (contents of
+   `memiro-signing.p12.base64`) and `MACOS_CERT_PASSWORD` (the printed password).
+3. Keep the `.p12` safe and out of git. `release.yml` imports it
+   (`scripts/import-macos-signing-cert.sh`) and signs both Mac builds; without the secrets
+   it falls back to ad-hoc. The `macos` CI job tests the same path with a throwaway
+   certificate and checks that the designated requirement is bound to the certificate.
+
+Gatekeeper's «unidentified developer» warning remains until an Apple Developer ID is used.
+Users coming from ad-hoc builds grant permissions once more after the first signed update.
+
 ## Bug reports from the app
 
 Users send reports from the app (🐞 / Settings / tray / Help menu). They arrive as GitHub

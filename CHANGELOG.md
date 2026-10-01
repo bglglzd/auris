@@ -3,6 +3,16 @@
 All notable changes to Memiro AI. Versions follow [Semantic Versioning](https://semver.org/);
 installers for every version are on [GitHub Releases](https://github.com/bglglzd/auris/releases).
 
+## [0.12.0] — 2026-10-02
+
+### Changed
+- **Fewer permission prompts on macOS.**
+  - Voices of the other side are captured with Core Audio on macOS 14.2+: macOS asks only for «System Audio Recording Only» — no screen access, no app restart, no monthly reminder on macOS 15. macOS 13–14.1 keep the previous method.
+  - **Mac setup** on first launch: microphone and system audio, one click each, with live status — prompts no longer pop up in the middle of a call. Also in Settings → Recording.
+  - Notifications are off by default on Mac (no prompt); a switch in Settings → Recording turns them on.
+  - Permissions survive updates once the free signing certificate is configured for releases (a stable signature instead of a per-build one).
+- **Cleaner sound for recognition on Mac:** microphone and system audio are resampled to 16 kHz with an anti-aliasing filter (windowed sinc) instead of linear interpolation, so high-frequency noise no longer folds into the speech band. Recognition stays fully local with the same models and speed.
+
 ## [0.11.0] — 2026-10-01
 
 ### Added
@@ -128,6 +138,7 @@ installers for every version are on [GitHub Releases](https://github.com/bglglzd
 ## Earlier
 - Two-track recording (microphone + system audio), local Whisper transcription, meeting library, import of external recordings, speaker diarization, AI summaries and questions via an OpenAI-compatible endpoint.
 
+[0.12.0]: https://github.com/bglglzd/auris/releases/tag/v0.12.0
 [0.11.0]: https://github.com/bglglzd/auris/releases/tag/v0.11.0
 [0.10.0]: https://github.com/bglglzd/auris/releases/tag/v0.10.0
 [0.9.0]: https://github.com/bglglzd/auris/releases/tag/v0.9.0

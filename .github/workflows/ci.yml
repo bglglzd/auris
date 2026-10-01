@@ -136,6 +136,14 @@ jobs:
         run: |
           cargo test -p uxo-core --features diarize,parakeet
           cargo test -p uxo-core --features diarize --test diarize_e2e -- --ignored
+      # Подпись самоподписанным сертификатом — тот же путь, что в релизе
+      # (с секретами MACOS_CERT_*), здесь — одноразовый сертификат.
+      - name: Signing identity (throwaway self-signed)
+        run: |
+          OUT_DIR="$RUNNER_TEMP/cert" PASSWORD="$(openssl rand -hex 12)" QUIET=1 scripts/make-macos-signing-cert.sh
+          P12_BASE64="$(cat "$RUNNER_TEMP/cert/memiro-signing.p12.base64")" \
+          P12_PASSWORD="$(cat "$RUNNER_TEMP/cert/memiro-signing.password")" \
+            scripts/import-macos-signing-cert.sh
       - name: Build Memiro AI.app (${{ matrix.arch }})
         # Без артефактов обновления: ключ подписи есть только у release.yml.
         run: >-
@@ -150,4 +158,9 @@ jobs:
           /usr/libexec/PlistBuddy -c "Print :NSMicrophoneUsageDescription" "$APP/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "$APP/Contents/Info.plist"
           lipo -archs "$APP/Contents/MacOS/Memiro"
-          codesign -dv "$APP" 2>&1 | head -5
+          codesign -dvv "$APP" 2>&1 | head -12
+          # Постоянная подпись: требование привязано к сертификату, а не к хэшу
+          # сборки — разрешения macOS переживают обновления.
+          codesign -dvv "$APP" 2>&1 | grep -q "Authority=Memiro AI Self-Signed"
+          codesign -d -r- "$APP" 2>&1 | tee /dev/stderr | grep -Eq "certificate (leaf|root) = H"
+          codesign --verify --deep --strict "$APP"

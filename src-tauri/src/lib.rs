@@ -51,13 +51,12 @@ fn toggle_and_notify<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     match commands::toggle_recording_state(&state) {
         Ok(now_recording) => {
             let _ = app.emit("recording-changed", now_recording);
-            use tauri_plugin_notification::NotificationExt;
             let (title, body) = if now_recording {
                 ("🔴 Memiro — запись начата", "Идёт запись звонка")
             } else {
                 ("✅ Memiro — запись остановлена", "Запись сохранена")
             };
-            let _ = app.notification().builder().title(title).body(body).show();
+            commands::notify(app, title, body);
             if now_recording {
                 commands::report_recorder_warning(app, &state);
             }
@@ -342,13 +341,7 @@ fn auto_stop_and_maybe_discard<R: tauri::Runtime>(app: &tauri::AppHandle<R>, min
                 );
                 let _ = app.emit("recording-changed", false);
             } else {
-                use tauri_plugin_notification::NotificationExt;
-                let _ = app
-                    .notification()
-                    .builder()
-                    .title("✅ Memiro — запись остановлена")
-                    .body("Запись сохранена")
-                    .show();
+                commands::notify(app, "✅ Memiro — запись остановлена", "Запись сохранена");
             }
         }
         Ok(None) => {}
@@ -482,6 +475,11 @@ pub fn run() {
             commands::save_binary_file,
             commands::update_meeting_notes,
             commands::ai_check,
+            commands::set_notifications,
+            commands::test_notification,
+            commands::mac_permissions,
+            commands::request_mic_access,
+            commands::request_system_audio_access,
             commands::platform,
             commands::system_info,
             commands::system_audio_access,

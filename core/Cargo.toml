@@ -74,9 +74,14 @@ ort = { version = "=2.0.0-rc.13", optional = true, default-features = false, fea
 
 [target.'cfg(target_os = "macos")'.dependencies]
 ort = { version = "=2.0.0-rc.13", optional = true, default-features = false, features = ["std", "load-dynamic", "api-23"] }
-# Захват звука на macOS: микрофон (CoreAudio) и системный звук (ScreenCaptureKit).
+# Захват звука на macOS: микрофон (CoreAudio), системный звук — Core Audio tap
+# (macOS 14.2+, objc2 для CATapDescription/AVCaptureDevice) или ScreenCaptureKit.
 cpal = "0.15"
 screencapturekit = "11"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSArray", "NSDictionary", "NSValue", "NSUUID", "NSObject"] }
+block2 = "0.6"
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"
