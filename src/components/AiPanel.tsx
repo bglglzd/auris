@@ -8,6 +8,7 @@ import { meetingContext } from "../speakers";
 import { AI_AUTO_EVENT, PRESETS, REPORT_META, REPORT_ORDER } from "../reports";
 import type { AiAutoDetail } from "../reports";
 import { Markdown } from "./Markdown";
+import { openBugReport } from "../bugreport";
 import { CopyButton } from "./CopyButton";
 
 interface Props {
@@ -230,7 +231,18 @@ export function AiPanel({ meeting, labels, hasTranscript, reports, onReport, onM
             <span className="spin">◜</span> {auto.label ?? "ИИ работает…"}
           </div>
         )}
-        {error && <div className="ai-error">{error}</div>}
+        {error && (
+          <div className="ai-error">
+            {error}{" "}
+            <button
+              type="button"
+              className="link-btn"
+              onClick={() => openBugReport({ title: "Ошибка ИИ", what: error })}
+            >
+              Сообщить об ошибке
+            </button>
+          </div>
+        )}
 
         <div className="preset-grid">
           {PRESETS.map((k) => {

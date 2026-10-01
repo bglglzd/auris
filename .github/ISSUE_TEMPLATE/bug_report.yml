@@ -12,14 +12,14 @@ body:
     id: version
     attributes:
       label: Memiro version
-      placeholder: "v0.8.1"
+      placeholder: "v0.11.0"
     validations:
       required: true
   - type: input
     id: windows
     attributes:
-      label: Windows version
-      placeholder: "Windows 11 24H2"
+      label: OS and version
+      placeholder: "Windows 11 24H2 / macOS 15.1 (Apple Silicon)"
     validations:
       required: true
   - type: textarea

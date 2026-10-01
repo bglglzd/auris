@@ -233,7 +233,11 @@ Ollama), `ai::pick_model` (настроенная → ближайшая по п
   (`useAppMenu`). Окно/бандл Mac — `src-tauri/tauri.macos.conf.json`
   (`macOSPrivateApi`, Overlay-заголовок, frameworks, entitlements, мин. 13.0,
   ad-hoc подпись), `Info.plist`, `Entitlements.plist`. Собирать Mac только через
-  `npm run tauri` — CLI сам включает фичу `macos-private-api`.
+  `npm run tauri` — CLI сам включает фичу `macos-private-api`. Тема окна
+  синхронизируется с темой приложения (`theme.ts` → `setTheme`, право
+  `core:window:allow-set-theme`): иначе вибрация берёт системную тему. Варианты
+  `.btn.primary/.danger` в mac-слое переопределяются явно (общий mac-фон кнопки
+  специфичнее). Тосты — под модальными окнами (z-index 45 < 50).
 - Экспорт (v0.8): одна кнопка «⬇ Экспорт» → `ExportModal`: Word (.docx — свой
   генератор `docx.ts`, без зависимостей), Markdown, TXT, субтитры SRT; в документ
   складываются стенограмма (опц. таймкоды) + выбранные ИИ-отчёты.
@@ -241,6 +245,15 @@ Ollama), `ai::pick_model` (настроенная → ближайшая по п
   `MeetingEditDialog` (порталом в body: у сайдбара `backdrop-filter`); заметки —
   столбец `notes` в БД (миграция), команда `update_meeting_notes`, поле в
   `MeetingView`, первая строка — в списке, поиск по заметкам.
+- **Отчёты об ошибках (v0.11)**: `BugReportModal` + чистая логика `bugreport.ts`
+  (`sanitize` — убирает пути с именем, ключи, токены, e-mail; `issueUrl` —
+  заполненная форма `.github/ISSUE_TEMPLATE/app_report.yml`, заголовок `[app] …`,
+  ссылка ≤ 7600 символов; «Мои отчёты» — localStorage `3uxo.bugreports`). Открыть
+  из любого места — `openBugReport(prefill)` (событие `memiro-bug-report`): кнопка 🐞
+  в футере сайдбара, Настройки → «Ошибки и диагностика», трей и Справка на Mac
+  (`app-menu` `bug`), баннеры ошибок в `MeetingView`/`AiPanel`. Версия ОС —
+  команда `system_info`. Разбор: еженедельный routine в сессии Claude — issues
+  `[app]`/`bug` → дубли/уточнения → исправления PR → релиз патча (docs/RELEASE.md).
 - Голоса (v0.8): `SpeakersPanel` — доля речи, «▶ Образец», имена, «Объединить»,
   число голосов Авто/1…6 (мгновенный пересчёт); чистая логика — `speakers.ts`.
 

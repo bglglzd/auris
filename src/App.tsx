@@ -18,6 +18,9 @@ import { runAutoAi } from "./aiauto";
 import { AI_MODEL_EVENT, syncServerModel } from "./aimodel";
 import type { AiModelChange } from "./aimodel";
 import { useAppMenu } from "./appmenu";
+import { BugReportModal } from "./components/BugReportModal";
+import { BUG_REPORT_EVENT } from "./bugreport";
+import type { BugDraft } from "./bugreport";
 import { isMac } from "./platform";
 
 type ProgressEvent = {
@@ -94,6 +97,15 @@ export default function App() {
       un.then((f) => f());
     };
   }, []);
+
+  // «Сообщить об ошибке» — из сайдбара, настроек, меню, трея и баннеров ошибок.
+  const [bug, setBug] = useState<Partial<BugDraft> | null>(null);
+  useEffect(() => {
+    const on = (e: Event) => setBug((e as CustomEvent<Partial<BugDraft>>).detail ?? {});
+    window.addEventListener(BUG_REPORT_EVENT, on);
+    return () => window.removeEventListener(BUG_REPORT_EVENT, on);
+  }, []);
+  useAppMenu("bug", () => setBug({}));
 
   // Строка меню macOS.
   useAppMenu("settings", () => setShowSettings(true));
@@ -411,6 +423,7 @@ export default function App() {
           }}
         />
       )}
+      {bug && <BugReportModal prefill={bug} onClose={() => setBug(null)} />}
       {showImport && (
         <ImportModal
           onClose={() => setShowImport(false)}

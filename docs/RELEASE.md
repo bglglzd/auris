@@ -66,6 +66,14 @@ signed; for Developer ID signing and notarization add the `APPLE_*` secrets list
 After a release check that `latest.json` lists `windows-x86_64`, `darwin-aarch64` and
 `darwin-x86_64`.
 
+## Bug reports from the app
+
+Users send reports from the app (🐞 / Settings / tray / Help menu). They arrive as GitHub
+issues created from `.github/ISSUE_TEMPLATE/app_report.yml`, titled `[app] …` and labelled
+`bug`, with version, OS and a sanitized diagnostic log. A weekly routine triages them:
+deduplicate and answer, ask for details where needed, fix confirmed bugs in a PR with
+tests, release a patch version and close the fixed issues with a link to the release.
+
 ## Updater
 
 - The endpoint is set in `src-tauri/tauri.conf.json → plugins.updater.endpoints`

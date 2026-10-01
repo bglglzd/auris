@@ -24,6 +24,11 @@
   (ScreenCaptureKit) on a real call, the screen-recording permission flow, the menu bar,
   the translucent window and updates — compiled and bundled by CI, not yet run by users.
 
+- **New in 0.11:** «Report a bug» on real Windows/macOS (browser opens the prefilled GitHub
+  form, OS version via `system_info`), the macOS window following the app theme (sidebar
+  material) and the restored primary-button colors — checked in the browser preview with a
+  contrast audit of every button in both themes, not yet on a real Mac.
+
 ## Known limitations
 
 - macOS builds are ad-hoc signed, not notarized: the first launch needs right-click → Open.

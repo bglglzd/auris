@@ -12,6 +12,7 @@ import { findUpdate } from "../updater";
 import type { AiCheck } from "../types";
 import { isMac } from "../platform";
 import { MacPermissions } from "./MacPermissions";
+import { openBugReport } from "../bugreport";
 
 /// Переключатель-тумблер в стиле Memiro.
 function Switch({
@@ -519,18 +520,23 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
         {/* ---------- Диагностика ---------- */}
         <details className="settings-section">
           <summary>
-            <span className="sec-title">Диагностика</span>
-            <span className="sec-sub">Лог для поддержки</span>
+            <span className="sec-title">Ошибки и диагностика</span>
+            <span className="sec-sub">Сообщить об ошибке, лог для поддержки</span>
             <span className="sec-chev" aria-hidden="true">
               ⌄
             </span>
           </summary>
           <div className="sec-body">
             <p className="hint">
-              Если что-то идёт не так — скопируй лог и пришли его. В нём версия,
-              окружение и последние ошибки (без твоих ключей и текста разговоров).
+              Что-то работает не так? Сообщите об ошибке — отчёт попадёт
+              разработчикам, ошибки разбираются и исправляются по плану. К отчёту
+              можно приложить диагностику: версию, систему и журнал (без ключей и
+              текста разговоров).
             </p>
             <div className="btn-row">
+              <button type="button" className="btn primary" onClick={() => openBugReport()}>
+                Сообщить об ошибке
+              </button>
               <CopyLogButton className="btn" />
             </div>
           </div>

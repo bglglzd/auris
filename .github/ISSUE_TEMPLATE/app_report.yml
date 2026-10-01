@@ -1,0 +1,46 @@
+name: Отчёт об ошибке из приложения
+description: Отчёт, отправленный из Memiro AI (меню «Сообщить об ошибке»). Поля заполняет приложение.
+title: "[app] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Отчёт подготовлен приложением Memiro AI. Проверьте текст и нажмите **Submit new issue**.
+        Не добавляйте ключи API, записи и тексты разговоров — отчёт публичный.
+  - type: textarea
+    id: what
+    attributes:
+      label: Что случилось
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Как воспроизвести
+  - type: textarea
+    id: expected
+    attributes:
+      label: Что ожидалось
+  - type: input
+    id: impact
+    attributes:
+      label: Насколько мешает и как часто
+  - type: input
+    id: version
+    attributes:
+      label: Версия Memiro AI
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Система
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Диагностика
+      description: Версия, система, настройки распознавания и последние строки лога — без ключей и текста встреч.
+      render: text

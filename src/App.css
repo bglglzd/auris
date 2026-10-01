@@ -2757,6 +2757,10 @@ details.adv[open] summary::before {
   background: var(--brand-grad);
   color: #fff;
 }
+/* Тёмная тема: на светлом градиенте — тёмный текст, как у основных кнопок. */
+:root[data-theme="dark"] .seg-btn.on {
+  color: var(--on-accent);
+}
 .seg-btn:disabled {
   opacity: 0.5;
 }
@@ -3514,7 +3518,8 @@ details.adv[open] summary::before {
   position: fixed;
   right: 16px;
   bottom: 16px;
-  z-index: 90;
+  /* Ниже модальных окон (оверлей — 50): тост не закрывает их кнопки. */
+  z-index: 45;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -3585,7 +3590,7 @@ details.adv[open] summary::before {
 }
 :root[data-platform="macos"],
 :root[data-platform="macos"][data-theme="dark"] {
-  --mac-sidebar: rgba(14, 26, 39, 0.52);
+  --mac-sidebar: rgba(12, 23, 35, 0.9);
   --mac-content: #0f1b28;
   --mac-hairline: rgba(255, 255, 255, 0.08);
   --mac-selected: color-mix(in srgb, var(--accent) 30%, transparent);
@@ -3594,7 +3599,7 @@ details.adv[open] summary::before {
   --focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 50%, transparent);
 }
 :root[data-platform="macos"][data-theme="light"] {
-  --mac-sidebar: rgba(236, 242, 249, 0.55);
+  --mac-sidebar: rgba(242, 246, 251, 0.88);
   --mac-content: #ffffff;
   --mac-hairline: rgba(0, 0, 0, 0.09);
   --mac-selected: color-mix(in srgb, var(--accent) 18%, transparent);
@@ -3675,8 +3680,18 @@ details.adv[open] summary::before {
   border-color: var(--mac-control-border);
   filter: brightness(1.04);
 }
-:root[data-platform="macos"] .btn.primary {
+:root[data-platform="macos"] .btn.primary,
+:root[data-platform="macos"] .btn.primary:hover:not(:disabled) {
+  /* Заливные варианты сохраняют свой фон — общий mac-фон кнопки выше
+     специфичнее, чем .btn.primary, и иначе давал белый текст на белом. */
+  background: var(--brand-grad);
+  border-color: transparent;
   box-shadow: 0 0.5px 1px rgba(0, 0, 0, 0.18);
+}
+:root[data-platform="macos"] .btn.danger,
+:root[data-platform="macos"] .btn.danger:hover:not(:disabled) {
+  background: var(--rec);
+  border-color: transparent;
 }
 :root[data-platform="macos"] .btn.ghost {
   border-color: transparent;
@@ -3846,4 +3861,163 @@ details.adv[open] summary::before {
 }
 .perm-dot.neutral {
   background: var(--text-faint);
+}
+
+/* ---------- Сообщить об ошибке ---------- */
+.bug-modal {
+  width: min(620px, 100%);
+}
+.bug-modal .field input {
+  width: 100%;
+}
+.bug-modal textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 64px;
+  font: inherit;
+  font-size: 13.5px;
+  line-height: 1.5;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--field-border);
+  background: var(--field-bg);
+  color: var(--text);
+  box-sizing: border-box;
+  outline: none;
+}
+.bug-modal textarea:focus {
+  border-color: var(--accent-strong);
+}
+.bug-tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  margin: 2px 0 14px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-soft);
+}
+.bug-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 12px;
+}
+.bug-choice > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.bug-choice-label {
+  min-width: 132px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.bug-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  line-height: 1.45;
+  cursor: pointer;
+}
+.bug-check input {
+  margin-top: 2px;
+  accent-color: var(--accent);
+}
+.bug-diag {
+  margin: 8px 0 4px;
+  font-size: 12.5px;
+}
+.bug-diag summary {
+  cursor: pointer;
+  color: var(--accent);
+}
+.bug-diag pre {
+  max-height: 180px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+  border: 1px solid var(--glass-border);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-dim);
+}
+.bug-history ul {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.bug-history li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--glass-border);
+  background: var(--surface-soft);
+}
+.bh-title {
+  font-weight: 600;
+  font-size: 13.5px;
+}
+.bh-meta {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.bug-done {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 16px;
+  border-radius: var(--radius-card);
+  border: 1px solid color-mix(in srgb, var(--teal) 40%, transparent);
+  background: color-mix(in srgb, var(--teal) 9%, transparent);
+}
+.bug-done-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--teal);
+  color: var(--on-accent);
+  font-weight: 800;
+}
+.bug-done p {
+  margin: 4px 0 0;
+}
+/* Кнопка-значок «Сообщить об ошибке» в футере сайдбара */
+.footer-row .bug-trigger {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  border: 1px solid var(--glass-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-dim);
+}
+.footer-row .bug-trigger:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.footer-row .bug-trigger svg {
+  width: 16px;
+  height: 16px;
+}
+.error-banner .link-btn {
+  white-space: nowrap;
 }

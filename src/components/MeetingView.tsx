@@ -15,6 +15,7 @@ import { ExportModal } from "./ExportModal";
 import { AudioEditor } from "./AudioEditor";
 import { AiPanel } from "./AiPanel";
 import { CopyLogButton } from "./CopyLogButton";
+import { openBugReport } from "../bugreport";
 import { CopyButton } from "./CopyButton";
 
 interface Props {
@@ -458,6 +459,13 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
       {shownError && (
         <div className="ai-error error-banner">
           <span>{shownError}</span>
+          <button
+            type="button"
+            className="link-btn"
+            onClick={() => openBugReport({ title: "Ошибка во встрече", what: shownError })}
+          >
+            Сообщить об ошибке
+          </button>
           <CopyLogButton className="btn ghost" />
         </div>
       )}
