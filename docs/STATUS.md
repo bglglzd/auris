@@ -34,12 +34,21 @@
   type-checked for macOS in CI, signing verified in CI; capture on a real call not yet
   tested by users.
 
+- **New in 0.13:** the second pass for noisy windows and the language guard need Whisper
+  (downloaded on first need, ~0.9 GB) — logic covered by unit tests, Parakeet behaviour in
+  noise measured with `--example noise_eval` (street noise, crosstalk), Whisper rescue not yet
+  measured on real noisy meetings. Core Audio tap rate tracking (AirPods call mode) —
+  type-checked for macOS, needs a real call.
+
 ## Known limitations
 
 - macOS builds are ad-hoc signed, not notarized: the first launch needs right-click → Open.
   Developer ID signing and notarization are wired in `release.yml` and need Apple secrets.
 - Auto-recording of calls is Windows-only (the call detector uses WASAPI sessions).
 - Parakeet covers 25 European languages; other languages fall back to Whisper.
+- When other voices are as loud as the speaker (0 dB crosstalk), Parakeet drops the window
+  entirely; the second pass hands such windows to Whisper. Profanity filtering is
+  dictionary/rule based (Russian roots with prefixes + common English words).
 - Speaker count tuning is based on reference recordings; the Voices panel lets users
   correct it (number of voices, merge) without re-transcribing.
 

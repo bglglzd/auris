@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Meeting, ReportKind } from "../types";
 import type { SpeakerLabels } from "../labels";
 import { api } from "../api";
@@ -10,6 +10,7 @@ import type { AiAutoDetail } from "../reports";
 import { Markdown } from "./Markdown";
 import { openBugReport } from "../bugreport";
 import { CopyButton } from "./CopyButton";
+import { balancedColumns } from "../util";
 
 interface Props {
   meeting: Meeting;
@@ -29,6 +30,24 @@ export function AiPanel({ meeting, labels, hasTranscript, reports, onReport, onM
   const [editKind, setEditKind] = useState<ReportKind | null>(null);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
+  // Плашки пресетов — ровными рядами (6 → 6 / 3×2 / 2×3), без пустых мест.
+  const gridRef = useRef<HTMLDivElement>(null);
+  const [cols, setCols] = useState(3);
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    const measure = () => {
+      const cs = getComputedStyle(el);
+      const min = parseFloat(cs.getPropertyValue("--preset-min")) || 168;
+      const gap = parseFloat(cs.columnGap) || 8;
+      setCols(balancedColumns(PRESETS.length, el.clientWidth, min, gap));
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   // Фоновая работа ИИ после расшифровки (авто-заголовок/итоги).
   const [auto, setAuto] = useState<AiAutoDetail | null>(null);
   const configured = isAiConfigured(getSettings());
@@ -244,7 +263,7 @@ export function AiPanel({ meeting, labels, hasTranscript, reports, onReport, onM
           </div>
         )}
 
-        <div className="preset-grid">
+        <div className="preset-grid" ref={gridRef} style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
           {PRESETS.map((k) => {
             const m = REPORT_META[k];
             const done = !!reports[k];

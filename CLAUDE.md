@@ -162,6 +162,21 @@ e2e-тест `core/tests/diarize_e2e.rs` (`-- --ignored`, в CI на Windows).
 `waveform`, `audio_edit_state`, `apply_audio_edit`, `revert_audio_edit`.
 Фронт — `AudioEditor`/`WaveLane` + чистая логика `audioedit.ts`.
 
+### Качество распознавания (v0.13)
+`QualityGuard` (commands.rs, Parakeet + Whisper): (1) **второй проход** —
+окна Parakeet с низкой уверенностью (`parakeet::WindowScore`, softmax токена),
+SNR < 12 дБ (`enhance::snr_db`) или «речь есть, слов нет» (перебивания —
+Parakeet молчит) → Parakeet по `enhance::denoise` (спектральный гейт) →
+при неудаче Whisper; выбор — `rescue.rs` по уверенности. Замеры —
+`--example noise_eval`. (2) **контроль языка** — `langguard.rs`: реплики не той
+письменности → Whisper с `with_preferred_language` (`pick_language`: приоритет
+языка из настроек, другой — только при уверенности ≥ 0.7). (3) **словарь** —
+`vocab.rs`: пользовательские термины + встроенные сервисы; `initial_prompt`
+Whisper + исправление написания (транслит + Левенштейн, кириллические термины —
+только точно). (4) **мат** — `profanity.rs` / `src/profanity.ts` (одни правила,
+общие тесты): запись дословно, политика `settings.profanity` на показ/копию/
+экспорт/ИИ (`MeetingContext.censor`).
+
 ### Parakeet (v0.8.0, движок по умолчанию)
 `parakeet.rs` (фича `parakeet`): NVIDIA Parakeet TDT 0.6B v3 int8 (экспорт
 sherpa-onnx, GitHub-релиз `.tar.bz2` ~490 МБ, распаковка tar+bzip2 на чистом Rust в

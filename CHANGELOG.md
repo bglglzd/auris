@@ -3,6 +3,22 @@
 All notable changes to Memiro AI. Versions follow [Semantic Versioning](https://semver.org/);
 installers for every version are on [GitHub Releases](https://github.com/bglglzd/auris/releases).
 
+## [0.13.0] — 2026-10-02
+
+### Added
+- **Second pass for noisy recordings** (automatic): windows where recognition was unsure, noisy (street, wind, music) or where speech is audible but almost nothing was recognised (shouting, people talking over each other) are recognised again — on noise-reduced audio, and with Whisper if that is still not enough. The better result is kept, based on the model's own confidence. Everything stays local.
+- **Language control:** pick the main language of speech from a list. If a fragment comes out in the wrong script (Latin letters instead of Russian), Memiro re-checks it by ear with Whisper: the main language wins, but an English phrase that is really spoken stays English.
+- **Vocabulary** for terms, names and commands (Settings → Recognition): Memiro writes them the way you do («джира» → Jira) and hints them to Whisper. Popular services (Jira, Slack, GitHub, Figma, Kubernetes…) are built in. Stored only on this device.
+- **Profanity policy** (Settings → Recognition): hide as «[нецензурно]» (default, as in official transcripts) or keep verbatim (legal and journalistic transcription). The recording itself is stored verbatim, so the policy applies to display, copy, export and AI text and can be changed at any time.
+- Update notes now show only what concerns your platform (macOS or Windows).
+
+### Changed
+- AI preset cards are laid out in even rows (6 / 3×2 / 2×3) without empty slots.
+- The settings button in the sidebar is now a gear icon (the label shows on hover).
+
+### Fixed
+- macOS: system audio could be recorded at the wrong speed when the output device changed its sample rate (AirPods switching to call mode) — speech was then recognised as gibberish, often «in English». The rate now follows the device during recording, and headset microphone input is no longer mixed into the system track.
+
 ## [0.12.0] — 2026-10-02
 
 ### Changed

@@ -2829,6 +2829,8 @@ details.adv[open] summary::before {
 
 /* ---------- Пресеты ИИ ---------- */
 .preset-grid {
+  /* Число колонок задаёт AiPanel (balancedColumns): ряды без пустых мест. */
+  --preset-min: 190px;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
   gap: 10px;
@@ -3245,6 +3247,7 @@ details.adv[open] summary::before {
 
   /* ИИ */
   .preset-grid {
+    --preset-min: 168px;
     grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
     gap: 8px;
     margin-bottom: 12px;
