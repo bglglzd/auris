@@ -162,5 +162,5 @@ jobs:
           # Постоянная подпись: требование привязано к сертификату, а не к хэшу
           # сборки — разрешения macOS переживают обновления.
           codesign -dvv "$APP" 2>&1 | grep -q "Authority=Memiro AI Self-Signed"
-          codesign -d -r- "$APP" 2>&1 | tee /dev/stderr | grep -q "certificate leaf"
+          codesign -d -r- "$APP" 2>&1 | tee /dev/stderr | grep -Eq "certificate (leaf|root) = H"
           codesign --verify --deep --strict "$APP"
