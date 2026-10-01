@@ -36,6 +36,7 @@ describe("settings", () => {
         minKeepSecs: 12,
       },
       aiAuto: { title: false, summary: true, followModel: true },
+      notifications: true,
     });
     const s = getSettings();
     expect(s.whisper.model).toBe("wm");
@@ -87,6 +88,7 @@ describe("settings", () => {
           minKeepSecs: 12,
         },
         aiAuto: { title: true, summary: true, followModel: true },
+        notifications: true,
       }),
     ).toBe(true);
     expect(isAiConfigured(getSettings())).toBe(false);

@@ -5707,11 +5707,15 @@ name = "uxo-core"
 version = "0.1.0"
 dependencies = [
  "audiopus",
+ "block2",
  "bzip2",
  "chrono",
  "cpal",
  "hound",
  "kaldi-native-fbank",
+ "libc",
+ "objc2",
+ "objc2-foundation",
  "ogg",
  "ort",
  "rubato",

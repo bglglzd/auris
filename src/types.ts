@@ -129,6 +129,19 @@ export interface AppSettings {
   hotkey: string;
   autoRecord: AutoRecordConfig;
   aiAuto: AiAutoConfig;
+  /// Системные уведомления о старте/стоп записи. На macOS по умолчанию выкл —
+  /// не просим лишнее разрешение.
+  notifications: boolean;
+}
+
+/// Разрешения macOS: `granted` / `denied` / `undetermined` / `unknown`.
+export type PermStatus = "granted" | "denied" | "undetermined" | "unknown";
+export interface MacPermissionsState {
+  mic: PermStatus;
+  system_audio: PermStatus;
+  /// `audio` — «Только запись системного звука» (macOS 14.2+), `screen` —
+  /// «Запись экрана и системного звука» (13–14.1).
+  system_audio_mode: "audio" | "screen";
 }
 
 /// Состояние расшифровки одной встречи (живёт на уровне приложения, чтобы

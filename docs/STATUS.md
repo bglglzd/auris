@@ -29,6 +29,11 @@
   material) and the restored primary-button colors — checked in the browser preview with a
   contrast audit of every button in both themes, not yet on a real Mac.
 
+- **New in 0.12:** system audio via Core Audio taps (macOS 14.2+), the Mac setup flow
+  (`mac_permissions`, TCC preflight) and the self-signed release signature — compiled and
+  type-checked for macOS in CI, signing verified in CI; capture on a real call not yet
+  tested by users.
+
 ## Known limitations
 
 - macOS builds are ad-hoc signed, not notarized: the first launch needs right-click → Open.

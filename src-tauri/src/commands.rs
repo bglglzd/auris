@@ -28,8 +28,33 @@ pub struct TranscribeProgress {
 }
 
 /// Показывает нативное уведомление Windows (тихо игнорирует ошибки).
-pub(crate) fn notify(app: &AppHandle, title: &str, body: &str) {
-    let _ = app.notification().builder().title(title).body(body).show();
+/// Системные уведомления (старт/стоп записи и т.п.). На macOS по умолчанию
+/// выключены — не просим лишнее разрешение; включаются в настройках.
+static NOTIFY: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(!cfg!(target_os = "macos"));
+
+pub(crate) fn notify<R: tauri::Runtime>(app: &tauri::AppHandle<R>, title: &str, body: &str) {
+    if NOTIFY.load(std::sync::atomic::Ordering::Relaxed) {
+        let _ = app.notification().builder().title(title).body(body).show();
+    }
+}
+
+/// Включает/выключает системные уведомления (из настроек).
+#[tauri::command]
+pub fn set_notifications(enabled: bool) {
+    NOTIFY.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Пробное уведомление — заодно macOS спросит разрешение, когда пользователь
+/// сам включил уведомления.
+#[tauri::command]
+pub fn test_notification(app: AppHandle) {
+    let _ = app
+        .notification()
+        .builder()
+        .title("Memiro AI")
+        .body("Уведомления включены")
+        .show();
 }
 
 /// Дописывает строку в файл лога `<data_root>/3uxo.log` (переживает краш).
@@ -192,20 +217,63 @@ fn os_version() -> Option<String> {
     }
 }
 
-/// Разрешения macOS для записи: микрофон спрашивает сама система, а доступ к
-/// системному звуку («Запись экрана и системного звука») — проверяем здесь.
-/// `request = true` — показать системный запрос. На других ОС всегда `true`.
+/// Разрешения macOS для записи: доступ к звуку собеседников. `request = true`
+/// — показать системный запрос. На других ОС всегда `true`.
 #[tauri::command]
 pub fn system_audio_access(request: bool) -> bool {
     #[cfg(target_os = "macos")]
     {
-        uxo_core::mac_recorder::screen_capture_access(request)
+        if request {
+            uxo_core::mac_recorder::request_system_audio();
+        }
+        uxo_core::mac_recorder::system_audio_status() == "granted"
     }
     #[cfg(not(target_os = "macos"))]
     {
         let _ = request;
         true
     }
+}
+
+/// Статус разрешений для «Подготовки Mac»: `granted` / `denied` /
+/// `undetermined` / `unknown`. `system_audio_mode`: `audio` — «Только запись
+/// системного звука» (macOS 14.2+), `screen` — «Запись экрана и системного
+/// звука» (13–14.1). На других ОС — всё `granted`.
+#[derive(Clone, serde::Serialize)]
+pub struct MacPermissions {
+    pub mic: &'static str,
+    pub system_audio: &'static str,
+    pub system_audio_mode: &'static str,
+}
+
+#[tauri::command]
+pub fn mac_permissions() -> MacPermissions {
+    #[cfg(target_os = "macos")]
+    {
+        MacPermissions {
+            mic: uxo_core::mac_audiotap::mic_status(),
+            system_audio: uxo_core::mac_recorder::system_audio_status(),
+            system_audio_mode: uxo_core::mac_recorder::system_audio_mode(),
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        MacPermissions { mic: "granted", system_audio: "granted", system_audio_mode: "audio" }
+    }
+}
+
+/// Системный запрос: микрофон.
+#[tauri::command]
+pub fn request_mic_access() {
+    #[cfg(target_os = "macos")]
+    uxo_core::mac_audiotap::request_mic();
+}
+
+/// Системный запрос: звук собеседников.
+#[tauri::command]
+pub fn request_system_audio_access() {
+    #[cfg(target_os = "macos")]
+    uxo_core::mac_recorder::request_system_audio();
 }
 
 /// Открывает нужный раздел «Конфиденциальность и безопасность» (macOS):

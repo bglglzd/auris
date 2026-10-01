@@ -216,6 +216,15 @@ export const api = {
   systemInfo: (): Promise<{ os: string; os_version: string; arch: string }> =>
     inv("system_info"),
 
+  /// macOS: статус разрешений (микрофон, звук собеседников).
+  macPermissions: (): Promise<import("./types").MacPermissionsState> => inv("mac_permissions"),
+  requestMicAccess: (): Promise<void> => inv("request_mic_access"),
+  requestSystemAudioAccess: (): Promise<void> => inv("request_system_audio_access"),
+
+  /// Системные уведомления вкл/выкл; пробное — заодно спросит разрешение.
+  setNotifications: (enabled: boolean): Promise<void> => inv("set_notifications", { enabled }),
+  testNotification: (): Promise<void> => inv("test_notification"),
+
   /// macOS: открыть раздел «Конфиденциальность и безопасность».
   openPrivacySettings: (kind: "screen" | "mic"): Promise<void> =>
     inv("open_privacy_settings", { kind }),

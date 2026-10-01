@@ -25,50 +25,120 @@ pub fn write_silence_wav(path: &Path, secs: u64) -> AppResult<()> {
     Ok(())
 }
 
-/// Потоковый линейный ресемплер «любая частота → 16 кГц моно» для живого
-/// захвата (кадры приходят кусками из аудио-колбэков). Для речи линейной
-/// интерполяции достаточно: перед распознаванием дорожка ещё раз проходит
-/// через декодер импорта.
+/// Потоковый ресемплер в 16 кГц моно для захвата (микрофон и системный звук
+/// на macOS приходят на частоте устройства, обычно 48 кГц).
+///
+/// Оконный sinc (окно Блэкмана) с полосой 0.92 от Найквиста выхода: частоты
+/// выше 8 кГц не «заворачиваются» в речевую полосу (у простой линейной
+/// интерполяции они превращались в шум и мешали распознаванию). ~100 умножений
+/// на выходной сэмпл — для записи в реальном времени это ничто.
 pub struct StreamResampler {
     /// Шаг по входу на один выходной сэмпл: in_rate / 16000.
     step: f64,
-    /// Позиция следующего выходного сэмпла относительно `prev` (0..1…).
-    pos: f64,
-    prev: f32,
-    primed: bool,
+    /// Частота среза относительно частоты входа (≤ 0.5·0.92·out/in).
+    fc: f64,
+    /// Полуширина ядра во входных сэмплах.
+    half: i64,
+    /// История входа (моно); `hist[0]` — абсолютный индекс `base`.
+    hist: Vec<f32>,
+    base: i64,
+    /// Абсолютная позиция (во входных сэмплах) следующего выходного сэмпла.
+    next: f64,
+    /// Сколько входных сэмплов принято всего.
+    seen: i64,
+    passthrough: bool,
 }
+
+/// Нулевых переходов sinc на каждой стороне ядра.
+const SINC_ZC: f64 = 16.0;
 
 impl StreamResampler {
     pub fn new(in_rate: u32) -> Self {
+        let in_rate = in_rate.max(1) as f64;
+        let ratio = SAMPLE_RATE as f64 / in_rate; // out/in
+        let fc = 0.5 * ratio.min(1.0) * 0.92;
+        let half = (SINC_ZC / (2.0 * fc)).ceil() as i64;
         Self {
-            step: in_rate.max(1) as f64 / SAMPLE_RATE as f64,
-            pos: 0.0,
-            prev: 0.0,
-            primed: false,
+            step: in_rate / SAMPLE_RATE as f64,
+            fc,
+            half,
+            // До начала записи — тишина: первые выходы не ждут истории.
+            hist: vec![0.0; half as usize],
+            base: -half,
+            next: 0.0,
+            seen: 0,
+            passthrough: (in_rate - SAMPLE_RATE as f64).abs() < 0.5,
         }
     }
 
-    /// Принимает `frames` кадров с `channels` каналами (interleaved), сводит в
-    /// моно и дописывает выход (16 кГц) в `out`.
+    fn kernel(&self, d: f64) -> f64 {
+        let span = self.half as f64;
+        if d.abs() >= span {
+            return 0.0;
+        }
+        let x = 2.0 * self.fc * d;
+        let sinc = if x.abs() < 1e-9 { 1.0 } else { (std::f64::consts::PI * x).sin() / (std::f64::consts::PI * x) };
+        // Окно Блэкмана на [-span, span].
+        let w = 0.42 + 0.5 * (std::f64::consts::PI * d / span).cos() + 0.08 * (2.0 * std::f64::consts::PI * d / span).cos();
+        2.0 * self.fc * sinc * w
+    }
+
+    /// Один выходной сэмпл в позиции `next` (вход вокруг неё уже в истории).
+    fn emit_one(&mut self) -> f32 {
+        let t = self.next;
+        let c = t.floor() as i64;
+        let mut acc = 0.0f64;
+        for n in (c - self.half + 1)..=(c + self.half) {
+            let i = n - self.base;
+            if i >= 0 && (i as usize) < self.hist.len() {
+                acc += self.hist[i as usize] as f64 * self.kernel(t - n as f64);
+            }
+        }
+        self.next += self.step;
+        acc as f32
+    }
+
+    /// Выдаёт выходные сэмплы, для которых уже есть вход до `limit` (абс. индекс).
+    fn drain(&mut self, limit: i64, out: &mut Vec<f32>) {
+        while (self.next.floor() as i64) + self.half <= limit {
+            let y = self.emit_one();
+            out.push(y);
+        }
+        // История старше ядра следующего выхода больше не нужна.
+        let keep_from = self.next.floor() as i64 - self.half;
+        let drop = (keep_from - self.base).clamp(0, self.hist.len() as i64) as usize;
+        if drop > 4096 {
+            self.hist.drain(..drop);
+            self.base += drop as i64;
+        }
+    }
+
+    /// Принимает кадры с `channels` каналами (interleaved), сводит в моно и
+    /// дописывает выход (16 кГц) в `out`.
     pub fn push(&mut self, interleaved: &[f32], channels: usize, out: &mut Vec<f32>) {
         let ch = channels.max(1);
+        if self.passthrough {
+            out.extend(interleaved.chunks(ch).map(|f| f.iter().sum::<f32>() / f.len() as f32));
+            return;
+        }
         for frame in interleaved.chunks(ch) {
-            let x = frame.iter().sum::<f32>() / frame.len() as f32;
-            if !self.primed {
-                self.prev = x;
-                self.primed = true;
-                out.push(x);
-                self.pos = self.step;
-                continue;
-            }
-            // Выходные сэмплы между prev (t=0) и x (t=1).
-            while self.pos <= 1.0 {
-                let t = self.pos as f32;
-                out.push(self.prev + (x - self.prev) * t);
-                self.pos += self.step;
-            }
-            self.pos -= 1.0;
-            self.prev = x;
+            self.hist.push(frame.iter().sum::<f32>() / frame.len() as f32);
+            self.seen += 1;
+        }
+        self.drain(self.seen - 1, out);
+    }
+
+    /// Конец записи: досчитывает хвост (вход за концом — тишина), ровно до
+    /// конца записанного звука.
+    pub fn flush(&mut self, out: &mut Vec<f32>) {
+        if self.passthrough {
+            return;
+        }
+        let end = self.seen;
+        self.hist.extend(std::iter::repeat(0.0).take(self.half as usize + 1));
+        while self.next < end as f64 {
+            let y = self.emit_one();
+            out.push(y);
         }
     }
 }
@@ -110,11 +180,20 @@ impl TrackSink {
 
     /// Дописывает кусок звука (interleaved f32).
     pub fn push(&mut self, interleaved: &[f32], channels: usize) {
+        if self.writer.is_none() {
+            return;
+        }
+        let mut buf = std::mem::take(&mut self.buf);
+        buf.clear();
+        self.resampler.push(interleaved, channels, &mut buf);
+        self.write_samples(&buf);
+        self.buf = buf;
+    }
+
+    fn write_samples(&mut self, samples: &[f32]) {
         let Some(w) = self.writer.as_mut() else { return };
-        self.buf.clear();
-        self.resampler.push(interleaved, channels, &mut self.buf);
         let mut peak = 0u32;
-        for &x in &self.buf {
+        for &x in samples {
             let v = f32_to_i16(x);
             peak = peak.max(v.unsigned_abs() as u32);
             if w.write_sample(v).is_ok() {
@@ -131,6 +210,12 @@ impl TrackSink {
 
     /// Закрывает WAV (заголовок с длиной). Повторный вызов — без эффекта.
     pub fn finalize(&mut self) -> AppResult<()> {
+        if self.writer.is_some() {
+            // Хвост ресемплера — последние ~мс звука.
+            let mut tail = Vec::new();
+            self.resampler.flush(&mut tail);
+            self.write_samples(&tail);
+        }
         if let Some(w) = self.writer.take() {
             w.finalize().map_err(|e| AppError::Audio(e.to_string()))?;
         }
@@ -224,35 +309,73 @@ mod tests {
 
     #[test]
     fn stream_resampler_rates_and_mono_mix() {
-        // 48 кГц стерео, 1 секунда кусками → ~16000 моно-сэмплов.
+        // 48 кГц стерео, 1 секунда кусками → 16000 моно-сэмплов.
         let mut r = StreamResampler::new(48_000);
         let mut out = Vec::new();
         let chunk: Vec<f32> = (0..960).flat_map(|_| [0.5f32, -0.5]).collect();
         for _ in 0..50 {
             r.push(&chunk, 2, &mut out);
         }
+        r.flush(&mut out);
         assert!((out.len() as i64 - 16_000).abs() <= 2, "len {}", out.len());
         assert!(out.iter().all(|x| x.abs() < 1e-6), "стерео в противофазе → 0");
 
-        // 16 кГц моно — без изменений длины.
+        // 16 кГц моно — без изменений.
         let mut r = StreamResampler::new(16_000);
         let mut out = Vec::new();
         let sig: Vec<f32> = (0..1600).map(|i| (i as f32 * 0.01).sin()).collect();
         r.push(&sig, 1, &mut out);
-        assert!((out.len() as i64 - 1600).abs() <= 1);
-        assert!((out[800] - sig[800]).abs() < 1e-3);
+        r.flush(&mut out);
+        assert_eq!(out.len(), 1600);
+        assert!((out[800] - sig[800]).abs() < 1e-6);
 
-        // 44.1 кГц моно, куски разной длины.
+        // 44.1 кГц моно, куски разной длины: длина и уровень сохраняются.
         let mut r = StreamResampler::new(44_100);
         let mut out = Vec::new();
         let sig = vec![0.25f32; 44_100];
         for part in sig.chunks(333) {
             r.push(part, 1, &mut out);
         }
+        r.flush(&mut out);
         assert!((out.len() as i64 - 16_000).abs() <= 2, "len {}", out.len());
-        assert!(out.iter().all(|x| (x - 0.25).abs() < 1e-6));
+        // Края — переход из тишины; в середине уровень точный.
+        assert!(out[200..15_800].iter().all(|x| (x - 0.25).abs() < 2e-3));
         assert_eq!(f32_to_i16(2.0), 32767);
         assert_eq!(f32_to_i16(-1.0), -32767);
+    }
+
+    fn rms(x: &[f32]) -> f32 {
+        (x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32).sqrt()
+    }
+
+    fn tone(rate: u32, hz: f32, secs: f32) -> Vec<f32> {
+        (0..(rate as f32 * secs) as usize)
+            .map(|i| (2.0 * std::f32::consts::PI * hz * i as f32 / rate as f32).sin() * 0.5)
+            .collect()
+    }
+
+    #[test]
+    fn resampler_keeps_speech_band_and_blocks_aliasing() {
+        // Речь (1 кГц и 3,4 кГц) проходит без потерь уровня.
+        for hz in [1_000.0, 3_400.0] {
+            let mut r = StreamResampler::new(48_000);
+            let mut out = Vec::new();
+            for part in tone(48_000, hz, 1.0).chunks(480) {
+                r.push(part, 1, &mut out);
+            }
+            r.flush(&mut out);
+            let level = rms(&out[1_000..15_000]);
+            assert!((level - 0.3536).abs() < 0.01, "{hz} Гц: rms {level}");
+        }
+        // 12 кГц (выше 8 кГц Найквиста выхода) не превращается в шум 4 кГц.
+        let mut r = StreamResampler::new(48_000);
+        let mut out = Vec::new();
+        for part in tone(48_000, 12_000.0, 1.0).chunks(480) {
+            r.push(part, 1, &mut out);
+        }
+        r.flush(&mut out);
+        let leak = rms(&out[1_000..15_000]);
+        assert!(leak < 0.002, "алиасинг: rms {leak}");
     }
 
     #[test]
@@ -260,9 +383,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mic.wav");
         let mut sink = TrackSink::create(&path, 48_000).unwrap();
-        let chunk: Vec<f32> = (0..4800).map(|i| if i % 2 == 0 { 0.5 } else { -0.5 }).collect();
-        for _ in 0..10 {
-            sink.push(&chunk, 1); // 10 × 0.1 с
+        // 1 кГц, 0.5 — речевая полоса проходит, пик ≈ 16383.
+        let sig = tone(48_000, 1_000.0, 1.0);
+        for chunk in sig.chunks(4800) {
+            sink.push(chunk, 1); // 10 × 0.1 с
         }
         assert!((sink.secs() - 1.0).abs() < 0.01);
         assert!(sink.peak.load(std::sync::atomic::Ordering::Relaxed) > 10_000);

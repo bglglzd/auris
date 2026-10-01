@@ -1,5 +1,5 @@
 import type { AppSettings } from "./types";
-import { defaultHotkey } from "./platform";
+import { defaultHotkey, isMac } from "./platform";
 
 const KEY = "3uxo.settings";
 
@@ -25,6 +25,7 @@ const DEFAULTS: AppSettings = {
     minKeepSecs: 12,
   },
   aiAuto: { title: true, summary: true, followModel: true },
+  notifications: !isMac,
 };
 
 export function getSettings(): AppSettings {
@@ -44,6 +45,8 @@ export function getSettings(): AppSettings {
         hotkey: typeof parsed.hotkey === "string" ? parsed.hotkey : DEFAULTS.hotkey,
         autoRecord: { ...DEFAULTS.autoRecord, ...(parsed.autoRecord ?? {}) },
         aiAuto: { ...DEFAULTS.aiAuto, ...(parsed.aiAuto ?? {}) },
+        notifications:
+          typeof parsed.notifications === "boolean" ? parsed.notifications : DEFAULTS.notifications,
       };
     }
   } catch {

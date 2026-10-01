@@ -1,13 +1,15 @@
 //! Захват звука на macOS: две дорожки, как на Windows.
 //!
 //! - `mic.wav` — микрофон через CoreAudio (`cpal`), любая частота → 16 кГц моно.
-//! - `system.wav` — системный звук (собеседники) через ScreenCaptureKit
-//!   (macOS 13+): поток сразу 16 кГц моно; звук самого Memiro исключён.
+//! - `system.wav` — системный звук (собеседники): на macOS 14.2+ — Core Audio
+//!   tap (`mac_audiotap`, разрешение «Только запись системного звука»), на
+//!   13–14.1 — ScreenCaptureKit («Запись экрана и системного звука»). Звук
+//!   самого Memiro исключён.
 //!
 //! Разрешения: микрофон — `NSMicrophoneUsageDescription` в Info.plist (macOS
-//! спросит сам); системный звук — «Запись экрана и системного звука» в
-//! Системных настройках. Без него запись всё равно идёт (микрофон), а
-//! дорожка собеседника остаётся тихой — об этом сообщает `Recorder::warning`.
+//! спросит сам); системный звук — см. выше. Без него запись всё равно идёт
+//! (микрофон), а дорожка собеседника остаётся тихой — об этом сообщает
+//! `Recorder::warning`.
 //!
 //! Собирается только на macOS; компиляцию проверяет CI.
 
@@ -46,12 +48,48 @@ pub fn screen_capture_access(request: bool) -> bool {
 
 type Sink = Arc<Mutex<TrackSink>>;
 
+/// Каким способом пишется звук собеседников.
+pub fn system_audio_mode() -> &'static str {
+    if crate::mac_audiotap::supported() {
+        "audio"
+    } else {
+        "screen"
+    }
+}
+
+/// Статус разрешения на звук собеседников: `granted` / `denied` /
+/// `undetermined` / `unknown`.
+pub fn system_audio_status() -> &'static str {
+    if crate::mac_audiotap::supported() {
+        crate::mac_audiotap::system_audio_status()
+    } else if screen_capture_access(false) {
+        "granted"
+    } else {
+        "undetermined"
+    }
+}
+
+/// Показать системный запрос на звук собеседников.
+pub fn request_system_audio() {
+    if crate::mac_audiotap::supported() {
+        crate::mac_audiotap::request_system_audio();
+    } else {
+        screen_capture_access(true);
+    }
+}
+
+/// Захват звука собеседников.
+enum SystemCapture {
+    Tap(crate::mac_audiotap::SystemTap),
+    Screen(SCStream),
+}
+
 struct Running {
     mic: Sink,
     system: Sink,
     mic_stop: mpsc::Sender<()>,
     mic_thread: Option<JoinHandle<()>>,
-    stream: Option<SCStream>,
+    stream: Option<SystemCapture>,
 }
 
 pub struct MacRecorder {
@@ -217,14 +255,36 @@ impl Recorder for MacRecorder {
         let mic: Sink = Arc::new(Mutex::new(TrackSink::create(mic_path, 48_000)?));
         let system: Sink = Arc::new(Mutex::new(TrackSink::create(system_path, 16_000)?));
         let (mic_stop, mic_thread) = spawn_mic(mic.clone())?;
-        let stream = match start_system(system.clone()) {
-            Ok(s) => Some(s),
-            Err(e) => {
-                eprintln!("system audio: {e}");
-                *self.warning.lock().unwrap() = Some(e);
-                None
+        // macOS 14.2+: Core Audio tap (мягкое разрешение «только системный
+        // звук»); если не вышло — прежний путь через ScreenCaptureKit.
+        let mut stream = None;
+        if crate::mac_audiotap::supported() {
+            if crate::mac_audiotap::system_audio_status() == "denied" {
+                *self.warning.lock().unwrap() = Some(
+                    "нет доступа к звуку собеседников: включите Memiro AI в «Системные \
+                     настройки → Конфиденциальность и безопасность → Запись экрана и \
+                     системного звука → Только запись системного звука»"
+                        .into(),
+                );
             }
-        };
+            match crate::mac_audiotap::SystemTap::start(system.clone()) {
+                Ok(t) => stream = Some(SystemCapture::Tap(t)),
+                Err(e) => eprintln!("system audio tap: {e}; fallback to ScreenCaptureKit"),
+            }
+        }
+        if stream.is_none() {
+            if let Ok(mut s) = system.lock() {
+                s.set_input_rate(16_000);
+            }
+            stream = match start_system(system.clone()) {
+                Ok(s) => Some(SystemCapture::Screen(s)),
+                Err(e) => {
+                    eprintln!("system audio: {e}");
+                    *self.warning.lock().unwrap() = Some(e);
+                    None
+                }
+            };
+        }
         *running = Some(Running { mic, system, mic_stop, mic_thread: Some(mic_thread), stream });
         Ok(())
     }
@@ -240,8 +300,12 @@ impl Recorder for MacRecorder {
         if let Some(h) = r.mic_thread.take() {
             let _ = h.join();
         }
-        if let Some(stream) = r.stream.take() {
-            let _ = stream.stop_capture();
+        match r.stream.take() {
+            Some(SystemCapture::Screen(stream)) => {
+                let _ = stream.stop_capture();
+            }
+            Some(SystemCapture::Tap(tap)) => drop(tap),
+            None => {}
         }
         let secs = {
             let mut mic = r.mic.lock().unwrap();

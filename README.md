@@ -75,10 +75,12 @@ Most meeting tools upload your conversations to someone else's cloud. Memiro kee
 Memiro for Mac is not yet notarized by Apple, so the first time macOS will say it can't verify the developer:
 
 1. Open *Applications*, **right-click Memiro AI → Open**, then **Open** again. (Or: *System Settings → Privacy & Security* → **Open Anyway**.) This is needed only once.
-2. **Microphone** — macOS asks on the first recording; allow it.
-3. **Voices of the other side** — system audio is captured through ScreenCaptureKit, which needs *System Settings → Privacy & Security → Screen & System Audio Recording* → enable **Memiro AI**, then restart the app. Settings → Recording in Memiro shows the status and opens the right page. Only sound is recorded, never the screen, and Memiro's own sounds are excluded. Without this permission Memiro still records your microphone and tells you so.
+2. On first launch Memiro shows **Mac setup** — two permissions, one click each:
+   - **Microphone** — your voice.
+   - **Voices of the other side** — on macOS 14.2 and newer macOS asks for **«System Audio Recording Only»** (no screen access, no app restart). On macOS 13–14.1 it is «Screen & System Audio Recording» and Memiro needs a restart afterwards; only sound is recorded, never the screen.
+3. Notifications are optional and off by default — turn them on in Settings → Recording if you want them.
 
-Updates install in place like on Windows.
+Memiro's own sounds are excluded from the recording. Without the system-audio permission Memiro still records your microphone and tells you so; the setup is always available in Settings → Recording. Updates install in place like on Windows and keep the permissions.
 
 ### System requirements
 

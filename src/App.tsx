@@ -19,6 +19,7 @@ import { AI_MODEL_EVENT, syncServerModel } from "./aimodel";
 import type { AiModelChange } from "./aimodel";
 import { useAppMenu } from "./appmenu";
 import { BugReportModal } from "./components/BugReportModal";
+import { MacSetup, macSetupPending } from "./components/MacSetup";
 import { BUG_REPORT_EVENT } from "./bugreport";
 import type { BugDraft } from "./bugreport";
 import { isMac } from "./platform";
@@ -98,6 +99,14 @@ export default function App() {
     };
   }, []);
 
+  // Mac: «Подготовка» при первом запуске (разрешения по шагам) и из Настроек.
+  const [macSetup, setMacSetup] = useState(() => isMac && macSetupPending());
+  useEffect(() => {
+    const on = () => setMacSetup(true);
+    window.addEventListener("memiro-mac-setup", on);
+    return () => window.removeEventListener("memiro-mac-setup", on);
+  }, []);
+
   // «Сообщить об ошибке» — из сайдбара, настроек, меню, трея и баннеров ошибок.
   const [bug, setBug] = useState<Partial<BugDraft> | null>(null);
   useEffect(() => {
@@ -134,6 +143,7 @@ export default function App() {
   useEffect(() => {
     const s = getSettings();
     api.updateHotkey(s.hotkey).catch(() => {});
+    api.setNotifications(s.notifications).catch(() => {});
     api
       .setAutorecord(
         s.autoRecord.enabled,
@@ -424,6 +434,7 @@ export default function App() {
         />
       )}
       {bug && <BugReportModal prefill={bug} onClose={() => setBug(null)} />}
+      {macSetup && <MacSetup onClose={() => setMacSetup(false)} />}
       {showImport && (
         <ImportModal
           onClose={() => setShowImport(false)}
