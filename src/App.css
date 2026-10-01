@@ -4018,6 +4018,30 @@ details.adv[open] summary::before {
   width: 16px;
   height: 16px;
 }
+/* Настройки — значок-шестерёнка (подпись — во всплывающей подсказке):
+   тема слева, значки справа. */
+.footer-row .bug-trigger {
+  margin-left: auto;
+}
+.footer-row .settings-trigger {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  padding: 0;
+  border: 1px solid var(--glass-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-dim);
+}
+.footer-row .settings-trigger:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.footer-row .settings-trigger svg {
+  width: 17px;
+  height: 17px;
+}
 .error-banner .link-btn {
   white-space: nowrap;
 }
