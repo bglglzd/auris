@@ -10,16 +10,21 @@ pub mod cli_transcriber;
 pub mod decode;
 pub mod diarize;
 pub mod edit;
+pub mod enhance;
 pub mod error;
+pub mod langguard;
 pub mod model;
 pub mod models;
 pub mod nemo_mel;
 #[cfg(feature = "parakeet")]
 pub mod parakeet;
+pub mod profanity;
 pub mod recorder;
+pub mod rescue;
 pub mod service;
 pub mod storage;
 pub mod transcript;
+pub mod vocab;
 pub mod transcriber;
 
 #[cfg(feature = "whisper")]

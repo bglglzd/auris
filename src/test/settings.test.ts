@@ -11,6 +11,7 @@ describe("settings", () => {
       whisperPath: "",
       model: "parakeet-tdt-0.6b-v3",
       language: "ru",
+      vocabulary: "",
     });
     expect(s.aiAuto).toEqual({ title: true, summary: true, followModel: true });
     expect(s.hotkey).toBe("Ctrl+Shift+R");
@@ -26,7 +27,7 @@ describe("settings", () => {
   it("round-trips saved settings", () => {
     saveSettings({
       ai: { base_url: "u", api_key: "k", model: "m" },
-      whisper: { whisperPath: "p", model: "wm", language: "ru" },
+      whisper: { whisperPath: "p", model: "wm", language: "ru", vocabulary: "" },
       hotkey: "Alt+Shift+5",
       autoRecord: {
         enabled: true,
@@ -62,7 +63,7 @@ describe("settings", () => {
     );
     expect(getSettings().whisper.model).toBe("parakeet-tdt-0.6b-v3");
     // После сохранения в v0.8 явный выбор medium уважается.
-    saveSettings({ ...getSettings(), whisper: { whisperPath: "", model: "medium", language: "ru" } });
+    saveSettings({ ...getSettings(), whisper: { whisperPath: "", model: "medium", language: "ru", vocabulary: "" } });
     expect(getSettings().whisper.model).toBe("medium");
     // Нестандартный выбор не трогаем.
     localStorage.setItem("3uxo.settings", JSON.stringify({ whisper: { model: "small" } }));
@@ -78,7 +79,7 @@ describe("settings", () => {
     expect(
       isAiConfigured({
         ai: { base_url: "u", api_key: "k", model: "m" },
-        whisper: { whisperPath: "", model: "", language: "" },
+        whisper: { whisperPath: "", model: "", language: "", vocabulary: "" },
         hotkey: "Ctrl+Shift+R",
         autoRecord: {
           enabled: false,

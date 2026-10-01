@@ -22,6 +22,22 @@ pub struct WhisperTranscriber {
     ctx: WhisperContext,
     /// Код языка (напр. "ru"); `None` — автоопределение.
     language: Option<String>,
+    /// При автоопределении — приоритетный язык: берётся, если модель не
+    /// уверена в другом (см. [`pick_language`]).
+    prefer: Option<String>,
+    /// Подсказка модели: термины из словаря (`initial_prompt`).
+    prompt: Option<String>,
+}
+
+/// Выбор языка окна по вероятностям Whisper: приоритетный — если он не
+/// исключён явно; другой — только когда модель в нём уверена (≥ 0.7), а у
+/// приоритетного шансов почти нет (< 0.1).
+pub fn pick_language(prefer: &str, detected: &str, p_detected: f32, p_prefer: f32) -> String {
+    if detected != prefer && p_detected >= 0.7 && p_prefer < 0.1 {
+        detected.to_string()
+    } else {
+        prefer.to_string()
+    }
 }
 
 /// Модель по умолчанию — см. [`crate::models::DEFAULT_WHISPER`].
@@ -74,7 +90,40 @@ impl WhisperTranscriber {
             WhisperContextParameters::default(),
         )
         .map_err(|e| AppError::Audio(format!("whisper: cannot load model: {e}")))?;
-        Ok(Self { ctx, language })
+        Ok(Self { ctx, language, prefer: None, prompt: None })
+    }
+
+    /// Автоопределение языка с приоритетным `prefer` (для участков, где
+    /// основной движок мог ошибиться языком).
+    pub fn with_preferred_language(mut self, prefer: Option<String>) -> Self {
+        let prefer = prefer.map(|p| p.trim().to_lowercase()).filter(|p| !p.is_empty() && p != "auto");
+        if prefer.is_some() {
+            self.language = Some("auto".into());
+        }
+        self.prefer = prefer;
+        self
+    }
+
+    /// Подсказка модели (термины словаря).
+    pub fn with_prompt(mut self, prompt: Option<String>) -> Self {
+        self.prompt = prompt.filter(|p| !p.trim().is_empty() && !p.contains('\0'));
+        self
+    }
+
+    /// Язык окна: автоопределение Whisper с приоритетом `prefer`. Ошибка
+    /// определения → приоритетный язык.
+    fn detect_preferring(&self, state: &mut whisper_rs::WhisperState, chunk: &[f32], prefer: &str, threads: usize) -> String {
+        let detected = state
+            .pcm_to_mel(chunk, threads.max(1))
+            .ok()
+            .and_then(|_| state.lang_detect(0, threads.max(1)).ok());
+        let Some((id, probs)) = detected else { return prefer.to_string() };
+        let name = whisper_rs::get_lang_str(id).unwrap_or(prefer);
+        let p_det = probs.get(id.max(0) as usize).copied().unwrap_or(0.0);
+        let p_pref = whisper_rs::get_lang_id(prefer)
+            .and_then(|i| probs.get(i.max(0) as usize).copied())
+            .unwrap_or(0.0);
+        pick_language(prefer, name, p_det, p_pref)
     }
 
     /// Читает WAV (i16 моно) и нормализует в f32 [-1.0, 1.0].
@@ -99,14 +148,30 @@ impl WhisperTranscriber {
         on_progress: &dyn Fn(usize, usize),
     ) -> AppResult<Vec<Segment>> {
         let audio = Self::read_wav_as_f32(wav_path)?;
+        Ok(self.transcribe_audio(&audio, window_secs, on_progress)?.0)
+    }
+
+    /// Расшифровка отрывка (16 кГц моно f32) с оценкой: средняя вероятность
+    /// токенов текста (`None` — текста нет).
+    pub fn transcribe_samples(&self, samples: &[f32]) -> AppResult<(Vec<Segment>, Option<f32>)> {
+        self.transcribe_audio(samples, DEFAULT_WINDOW_SECS, &|_, _| {})
+    }
+
+    fn transcribe_audio(
+        &self,
+        audio: &[f32],
+        window_secs: usize,
+        on_progress: &dyn Fn(usize, usize),
+    ) -> AppResult<(Vec<Segment>, Option<f32>)> {
+        let (mut prob_sum, mut prob_n) = (0.0f32, 0usize);
         if audio.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), None));
         }
 
         let ctx = &self.ctx;
         let win = window_secs.max(1) * SAMPLE_RATE;
         // Окна режем в паузах (не посреди слова): ищем тишину в последних 10 с.
-        let chunks = crate::audio::quiet_chunks(&audio, win, 10 * SAMPLE_RATE, SAMPLE_RATE / 5);
+        let chunks = crate::audio::quiet_chunks(audio, win, 10 * SAMPLE_RATE, SAMPLE_RATE / 5);
         let total = chunks.len().max(1);
         let mut segments = Vec::new();
 
@@ -129,9 +194,20 @@ impl WhisperTranscriber {
                 patience: -1.0,
             });
             params.set_n_threads(n_threads);
+            let mut window_lang: Option<String> = None;
             match self.language.as_deref() {
-                Some("auto") | None => {}
+                Some("auto") | None => {
+                    if let Some(prefer) = self.prefer.as_deref() {
+                        window_lang = Some(self.detect_preferring(&mut state, chunk, prefer, n_threads as usize));
+                    }
+                }
                 Some(lang) => params.set_language(Some(lang)),
+            }
+            if let Some(l) = window_lang.as_deref() {
+                params.set_language(Some(l));
+            }
+            if let Some(p) = self.prompt.as_deref() {
+                params.set_initial_prompt(p);
             }
             params.set_translate(false);
             // Не опираться на предыдущий текст — меньше зацикленных галлюцинаций.
@@ -171,6 +247,17 @@ impl WhisperTranscriber {
                 if b > a && rms(&chunk[a..b]) < SILENCE_RMS {
                     continue;
                 }
+                // Уверенность: вероятности текстовых токенов (служебные
+                // [_BEG_], [_TT_…] и т.п. не считаем).
+                for k in 0..seg.n_tokens() {
+                    if let Some(tok) = seg.get_token(k) {
+                        let is_text = tok.to_str_lossy().map(|t| !t.trim_start().starts_with("[_")).unwrap_or(false);
+                        if is_text {
+                            prob_sum += tok.token_probability();
+                            prob_n += 1;
+                        }
+                    }
+                }
                 segments.push(Segment {
                     start_secs: offset + t0c as f64 / 100.0,
                     end_secs: offset + t1c as f64 / 100.0,
@@ -179,12 +266,25 @@ impl WhisperTranscriber {
             }
             on_progress(i + 1, total);
         }
-        Ok(segments)
+        Ok((segments, (prob_n > 0).then(|| prob_sum / prob_n as f32)))
     }
 }
 
 impl Transcriber for WhisperTranscriber {
     fn transcribe(&self, wav_path: &Path) -> AppResult<Vec<Segment>> {
         self.transcribe_windowed(wav_path, DEFAULT_WINDOW_SECS, &|_, _| {})
+    }
+}
+
+#[cfg(test)]
+mod lang_tests {
+    use super::pick_language;
+
+    #[test]
+    fn preferred_language_wins_unless_clearly_other() {
+        assert_eq!(pick_language("ru", "en", 0.55, 0.3), "ru");
+        assert_eq!(pick_language("ru", "en", 0.92, 0.03), "en");
+        assert_eq!(pick_language("ru", "ru", 0.9, 0.9), "ru");
+        assert_eq!(pick_language("ru", "uk", 0.75, 0.2), "ru");
     }
 }

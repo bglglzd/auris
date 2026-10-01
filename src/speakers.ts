@@ -1,5 +1,6 @@
 import type { Meeting, MeetingContext, Transcript } from "./types";
 import type { SpeakerLabels } from "./labels";
+import { profanityPolicy } from "./settings";
 
 /// Сводка по одному голосу в расшифровке.
 export interface SpeakerStat {
@@ -88,5 +89,5 @@ export function meetingContext(meeting: Meeting, labels: SpeakerLabels): Meeting
   for (const [k, v] of Object.entries(labels)) {
     if (v && v.trim()) names[k] = v.trim();
   }
-  return { title: meeting.title, participants: meeting.participants, names };
+  return { title: meeting.title, participants: meeting.participants, names, censor: profanityPolicy() === "censor" };
 }

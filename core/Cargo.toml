@@ -93,3 +93,7 @@ required-features = ["diarize"]
 [[example]]
 name = "asr_eval"
 required-features = ["parakeet"]
+
+[[example]]
+name = "noise_eval"
+required-features = ["parakeet"]

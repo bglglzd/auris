@@ -13,6 +13,9 @@ pub struct TranscribeOptions {
     pub model: Option<String>,
     /// Language code, e.g. "ru", "en". Uses whisper auto-detect when absent.
     pub language: Option<String>,
+    /// Словарь терминов (по строке или через запятую) — см. [`crate::vocab`].
+    #[serde(default)]
+    pub vocabulary: Option<String>,
 }
 
 /// Which whisper CLI family is being used; drives argument construction.

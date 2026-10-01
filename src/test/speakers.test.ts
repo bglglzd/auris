@@ -49,6 +49,7 @@ describe("speakers", () => {
       title: "Т",
       participants: "П",
       names: { spk0: "Олег" },
+      censor: true,
     });
   });
 });

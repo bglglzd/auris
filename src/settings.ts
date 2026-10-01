@@ -15,7 +15,7 @@ const VERSION = 2;
 
 const DEFAULTS: AppSettings = {
   ai: { base_url: "", api_key: "", model: "" },
-  whisper: { whisperPath: "", model: DEFAULT_MODEL, language: "ru" },
+  whisper: { whisperPath: "", model: DEFAULT_MODEL, language: "ru", vocabulary: "" },
   hotkey: defaultHotkey(),
   autoRecord: {
     enabled: false,
@@ -26,6 +26,7 @@ const DEFAULTS: AppSettings = {
   },
   aiAuto: { title: true, summary: true, followModel: true },
   notifications: !isMac,
+  profanity: "censor",
 };
 
 export function getSettings(): AppSettings {
@@ -47,6 +48,7 @@ export function getSettings(): AppSettings {
         aiAuto: { ...DEFAULTS.aiAuto, ...(parsed.aiAuto ?? {}) },
         notifications:
           typeof parsed.notifications === "boolean" ? parsed.notifications : DEFAULTS.notifications,
+        profanity: parsed.profanity === "verbatim" ? "verbatim" : "censor",
       };
     }
   } catch {
@@ -55,12 +57,21 @@ export function getSettings(): AppSettings {
   return DEFAULTS;
 }
 
+/// Событие «настройки сохранены» — открытые экраны подхватывают изменения.
+export const SETTINGS_EVENT = "memiro-settings";
+
 export function saveSettings(settings: AppSettings): void {
   localStorage.setItem(KEY, JSON.stringify({ ...settings, version: VERSION }));
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(SETTINGS_EVENT));
 }
 
 /// true, если ИИ настроен достаточно для запросов. Модель можно не указывать —
 /// тогда используется та, что сейчас отдаёт сервер.
 export function isAiConfigured(s: AppSettings): boolean {
   return !!(s.ai.base_url && s.ai.api_key);
+}
+
+/// Политика нецензурной лексики (по умолчанию — скрывать).
+export function profanityPolicy(s: AppSettings = getSettings()): "censor" | "verbatim" {
+  return s.profanity === "verbatim" ? "verbatim" : "censor";
 }

@@ -2829,6 +2829,8 @@ details.adv[open] summary::before {
 
 /* ---------- Пресеты ИИ ---------- */
 .preset-grid {
+  /* Число колонок задаёт AiPanel (balancedColumns): ряды без пустых мест. */
+  --preset-min: 190px;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
   gap: 10px;
@@ -3245,6 +3247,7 @@ details.adv[open] summary::before {
 
   /* ИИ */
   .preset-grid {
+    --preset-min: 168px;
     grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
     gap: 8px;
     margin-bottom: 12px;
@@ -3870,7 +3873,8 @@ details.adv[open] summary::before {
 .bug-modal .field input {
   width: 100%;
 }
-.bug-modal textarea {
+.bug-modal textarea,
+.field textarea {
   width: 100%;
   resize: vertical;
   min-height: 64px;
@@ -3885,7 +3889,8 @@ details.adv[open] summary::before {
   box-sizing: border-box;
   outline: none;
 }
-.bug-modal textarea:focus {
+.bug-modal textarea:focus,
+.field textarea:focus {
   border-color: var(--accent-strong);
 }
 .bug-tabs {
@@ -4017,6 +4022,30 @@ details.adv[open] summary::before {
 .footer-row .bug-trigger svg {
   width: 16px;
   height: 16px;
+}
+/* Настройки — значок-шестерёнка (подпись — во всплывающей подсказке):
+   тема слева, значки справа. */
+.footer-row .bug-trigger {
+  margin-left: auto;
+}
+.footer-row .settings-trigger {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  padding: 0;
+  border: 1px solid var(--glass-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-dim);
+}
+.footer-row .settings-trigger:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.footer-row .settings-trigger svg {
+  width: 17px;
+  height: 17px;
 }
 .error-banner .link-btn {
   white-space: nowrap;

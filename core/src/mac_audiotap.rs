@@ -113,6 +113,7 @@ const SEL_DEFAULT_SYSTEM_OUTPUT: u32 = fourcc(b"sOut");
 const SEL_PID_TO_PROCESS: u32 = fourcc(b"id2p");
 const SEL_DEVICE_UID: u32 = fourcc(b"uid ");
 const SEL_TAP_FORMAT: u32 = fourcc(b"tfmt");
+const SEL_NOMINAL_RATE: u32 = fourcc(b"nsrt");
 const FORMAT_LPCM: u32 = fourcc(b"lpcm");
 const FLAG_FLOAT: u32 = 1;
 const FLAG_NON_INTERLEAVED: u32 = 1 << 5;
@@ -241,6 +242,23 @@ struct TapCtx {
     sink: Sink,
     channels: usize,
     non_interleaved: bool,
+    /// Агрегатное устройство: его частота — частота приходящего звука.
+    aggregate: u32,
+    rate: std::sync::atomic::AtomicU32,
+    calls: std::sync::atomic::AtomicU32,
+}
+
+/// Номинальная частота устройства (Гц), 0 — не удалось прочитать.
+fn nominal_rate(device: u32) -> u32 {
+    let a = addr(SEL_NOMINAL_RATE);
+    let mut rate: f64 = 0.0;
+    let mut size = std::mem::size_of::<f64>() as u32;
+    let st = unsafe { AudioObjectGetPropertyData(device, &a, 0, std::ptr::null(), &mut size, &mut rate as *mut f64 as *mut c_void) };
+    if st == 0 && rate.is_finite() && (4_000.0..=768_000.0).contains(&rate) {
+        rate.round() as u32
+    } else {
+        0
+    }
 }
 
 unsafe extern "C" fn io_proc(
@@ -256,10 +274,27 @@ unsafe extern "C" fn io_proc(
         return 0;
     }
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        use std::sync::atomic::Ordering;
         let ctx = &*(client as *const TapCtx);
         let count = (*input).count as usize;
-        let buffers = std::slice::from_raw_parts((*input).buffers.as_ptr(), count);
+        let all = std::slice::from_raw_parts((*input).buffers.as_ptr(), count);
+        // В агрегате сначала идут входы устройства вывода (у гарнитуры —
+        // её микрофон), затем tap: берём только буферы tap — последние.
+        let tap_bufs = if ctx.non_interleaved { ctx.channels.max(1) } else { 1 };
+        let buffers = &all[count.saturating_sub(tap_bufs)..];
+        let count = buffers.len();
         let Ok(mut sink) = ctx.sink.lock() else { return };
+        // Частота устройства может смениться посреди записи (AirPods в
+        // звонке переходят на 16/24 кГц) — раз в ~сотню блоков сверяемся,
+        // иначе звук ускорится/замедлится и распознавание сломается.
+        if ctx.calls.fetch_add(1, Ordering::Relaxed) % 128 == 0 {
+            let r = nominal_rate(ctx.aggregate);
+            if r != 0 && r != ctx.rate.load(Ordering::Relaxed) {
+                ctx.rate.store(r, Ordering::Relaxed);
+                sink.set_input_rate(r);
+                eprintln!("system audio tap: rate → {r} Hz");
+            }
+        }
         if ctx.non_interleaved && count > 1 {
             // По буферу на канал — сводим в моно.
             let frames = buffers.iter().map(|b| b.size as usize / 4).min().unwrap_or(0);
@@ -431,13 +466,26 @@ impl SystemTap {
             return Err(format!("AudioHardwareCreateAggregateDevice: {st}"));
         }
 
+        // Частота звука в IOProc — частота агрегата (ведущее устройство), а
+        // не обязательно tap: при расхождении верим агрегату.
+        let agg_rate = nominal_rate(aggregate);
+        let rate = if agg_rate != 0 { agg_rate } else { fmt.sample_rate.round() as u32 };
+        eprintln!(
+            "system audio tap: tap {} Hz {} ch{}, aggregate {agg_rate} Hz",
+            fmt.sample_rate,
+            fmt.channels_per_frame,
+            if fmt.format_flags & FLAG_NON_INTERLEAVED != 0 { " non-interleaved" } else { "" }
+        );
         if let Ok(mut s) = sink.lock() {
-            s.set_input_rate(fmt.sample_rate.round() as u32);
+            s.set_input_rate(rate);
         }
         let ctx = Box::into_raw(Box::new(TapCtx {
             sink,
             channels: fmt.channels_per_frame.max(1) as usize,
             non_interleaved: fmt.format_flags & FLAG_NON_INTERLEAVED != 0,
+            aggregate,
+            rate: std::sync::atomic::AtomicU32::new(rate),
+            calls: std::sync::atomic::AtomicU32::new(1),
         }));
         let mut proc_id: Option<IoProc> = None;
         let st = unsafe { AudioDeviceCreateIOProcID(aggregate, io_proc, ctx as *mut c_void, &mut proc_id) };

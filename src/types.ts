@@ -48,6 +48,8 @@ export interface WhisperConfig {
   whisperPath: string;
   model: string;
   language: string;
+  /// Словарь: термины, имена, команды — по строке или через запятую.
+  vocabulary: string;
 }
 
 /// Авто-запись звонков: следим за аудио-сессиями выбранных приложений и
@@ -88,6 +90,8 @@ export interface MeetingContext {
   title: string;
   participants: string;
   names: Record<string, string>;
+  /// Скрывать нецензурную лексику в тексте для ИИ.
+  censor?: boolean;
 }
 
 /// Статус локальной модели (экран «Модели» в настройках).
@@ -132,6 +136,9 @@ export interface AppSettings {
   /// Системные уведомления о старте/стоп записи. На macOS по умолчанию выкл —
   /// не просим лишнее разрешение.
   notifications: boolean;
+  /// Нецензурная лексика: `censor` — скрывать пометкой «[нецензурно]»
+  /// (по умолчанию), `verbatim` — дословно. Применяется при показе/экспорте/ИИ.
+  profanity?: "censor" | "verbatim";
 }
 
 /// Разрешения macOS: `granted` / `denied` / `undetermined` / `unknown`.

@@ -12,6 +12,7 @@ vi.mock("../settings", () => ({
     whisper: { whisperPath: "", model: "", language: "" },
   }),
   isAiConfigured: () => true,
+  profanityPolicy: () => "censor",
 }));
 
 vi.mock("../api", () => ({

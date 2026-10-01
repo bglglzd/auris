@@ -38,6 +38,22 @@ notes and install it after the user agrees.
 The release notes (`notes` input or the release body) are what users see in the
 «Update available» dialog, so write them for users.
 
+**Per-platform notes.** The update dialog shows each user only their own
+platform's notes (`notesForPlatform` in `src/updater.ts`):
+- a `### macOS` / `### Windows` heading opens that platform's section (the
+  heading itself is hidden); any other heading starts a common section;
+- a line tagged `[mac]` / `[win]` (also after `- ` / `• `) is shown only on
+  that platform, without the tag;
+- everything else is shown everywhere. If nothing is left for a platform, the
+  dialog shows «Исправления и улучшения стабильности.»
+
+```
+• Быстрее расшифровка
+• [win] Исправлен хоткей
+### macOS
+• Меньше разрешений
+```
+
 ## Workflows
 
 ### `ci.yml` — every push to `main` and every PR

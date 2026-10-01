@@ -144,6 +144,23 @@ fn load(path: &Path) -> AppResult<Session> {
 pub struct Token {
     pub secs: f64,
     pub piece: String,
+    /// Уверенность модели в токене (вероятность после softmax), 0..1.
+    pub prob: f32,
+}
+
+/// Окно расшифровки с оценкой: где модель «слышала» плохо.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WindowScore {
+    pub start_secs: f64,
+    pub end_secs: f64,
+    /// Средняя уверенность по токенам окна; `None` — токенов нет.
+    pub confidence: Option<f32>,
+    pub tokens: usize,
+}
+
+/// Средняя уверенность по токенам.
+pub fn mean_confidence(tokens: &[Token]) -> Option<f32> {
+    (!tokens.is_empty()).then(|| tokens.iter().map(|t| t.prob).sum::<f32>() / tokens.len() as f32)
 }
 
 pub struct ParakeetTranscriber {
@@ -256,7 +273,11 @@ impl ParakeetTranscriber {
                 1
             };
             if y != self.blank {
-                out.push(Token { secs: t as f64 * FRAME_SECS, piece: self.tokens[y].clone() });
+                let v = &logits[..vocab.min(logits.len())];
+                let max = v[y];
+                let denom: f32 = v.iter().map(|l| (l - max).exp()).sum();
+                let prob = if denom > 0.0 { 1.0 / denom } else { 0.0 };
+                out.push(Token { secs: t as f64 * FRAME_SECS, piece: self.tokens[y].clone(), prob });
                 let next = self.decode_step(y, &h, &c)?;
                 g = next.0;
                 h = next.1;
@@ -281,6 +302,29 @@ impl ParakeetTranscriber {
         _window_secs: usize,
         on_progress: &dyn Fn(usize, usize),
     ) -> AppResult<Vec<Segment>> {
+        Ok(self.transcribe_scored(wav_path, on_progress)?.0)
+    }
+
+    /// Расшифровка отрывка (16 кГц моно f32) в реплики со временем от его начала.
+    pub fn transcribe_samples(&self, samples: &[f32]) -> AppResult<(Vec<Segment>, Option<f32>)> {
+        let mut tokens = Vec::new();
+        let chunks = crate::audio::quiet_chunks(samples, CHUNK_SECS * SR, CHUNK_SEARCH_SECS * SR, SR / 5);
+        for &(a, b) in &chunks {
+            let offset = a as f64 / SR as f64;
+            for tk in self.transcribe_chunk(&samples[a..b])? {
+                tokens.push(Token { secs: tk.secs + offset, ..tk });
+            }
+        }
+        let conf = mean_confidence(&tokens);
+        Ok((tokens_to_segments(&tokens, samples.len() as f64 / SR as f64), conf))
+    }
+
+    /// Как [`Self::transcribe_windowed`], плюс оценка каждого окна.
+    pub fn transcribe_scored(
+        &self,
+        wav_path: &Path,
+        on_progress: &dyn Fn(usize, usize),
+    ) -> AppResult<(Vec<Segment>, Vec<WindowScore>)> {
         let reader = hound::WavReader::open(wav_path).map_err(|e| AppError::Audio(e.to_string()))?;
         let audio: Vec<f32> = reader
             .into_samples::<i16>()
@@ -288,20 +332,28 @@ impl ParakeetTranscriber {
             .collect::<Result<_, _>>()
             .map_err(|e| AppError::Audio(e.to_string()))?;
         if audio.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         }
         let chunks =
             crate::audio::quiet_chunks(&audio, CHUNK_SECS * SR, CHUNK_SEARCH_SECS * SR, SR / 5);
         let total = chunks.len();
         let mut tokens = Vec::new();
+        let mut scores = Vec::with_capacity(total);
         for (i, &(a, b)) in chunks.iter().enumerate() {
             let offset = a as f64 / SR as f64;
-            for tk in self.transcribe_chunk(&audio[a..b])? {
-                tokens.push(Token { secs: tk.secs + offset, piece: tk.piece });
+            let window = self.transcribe_chunk(&audio[a..b])?;
+            scores.push(WindowScore {
+                start_secs: offset,
+                end_secs: b as f64 / SR as f64,
+                confidence: mean_confidence(&window),
+                tokens: window.len(),
+            });
+            for tk in window {
+                tokens.push(Token { secs: tk.secs + offset, ..tk });
             }
             on_progress(i + 1, total);
         }
-        Ok(tokens_to_segments(&tokens, audio.len() as f64 / SR as f64))
+        Ok((tokens_to_segments(&tokens, audio.len() as f64 / SR as f64), scores))
     }
 }
 
@@ -353,7 +405,7 @@ mod tests {
     use super::*;
 
     fn tk(secs: f64, p: &str) -> Token {
-        Token { secs, piece: p.into() }
+        Token { secs, piece: p.into(), prob: 1.0 }
     }
 
     #[test]

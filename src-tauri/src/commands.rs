@@ -565,10 +565,12 @@ pub async fn transcribe(
             uxo_core::models::pick_model(options.model.as_deref(), options.language.as_deref())
                 .to_string();
         flog(&state.data_root, &format!("transcribe: model {model}"));
+        let vocab = uxo_core::vocab::Vocabulary::new(options.vocabulary.as_deref().unwrap_or(""), true);
         let transcriber = load_asr(
             &state.data_root,
             &model,
             options.language.clone(),
+            &vocab,
             &|frac| emit("download", frac * 100.0, 0, 0),
         )?;
 
@@ -745,22 +747,245 @@ impl Asr for uxo_core::parakeet::ParakeetTranscriber {
     }
 }
 
+/// Parakeet + второй проход + контроль языка (всё локально, без вопросов
+/// пользователю):
+/// 1. Трудные окна (шум, перебивания: низкая уверенность или «речь есть, а
+///    слов нет») распознаются заново — Parakeet по очищенному от шума звуку,
+///    а если и так плохо — Whisper; остаётся лучший вариант (см. `rescue`).
+/// 2. Реплики «не на том языке» (латиница вместо русского) перепроверяет
+///    Whisper: язык из настроек — приоритетный, но английская фраза-термин,
+///    если она действительно звучит, остаётся английской.
+/// Whisper грузится, только если он понадобился.
+#[cfg(all(feature = "parakeet", feature = "whisper"))]
+struct QualityGuard {
+    primary: uxo_core::parakeet::ParakeetTranscriber,
+    language: Option<String>,
+    prompt: Option<String>,
+    data_root: PathBuf,
+    whisper: std::cell::OnceCell<Option<uxo_core::whisper::WhisperTranscriber>>,
+}
+
+#[cfg(all(feature = "parakeet", feature = "whisper"))]
+impl QualityGuard {
+    fn lang(&self) -> Option<&str> {
+        self.language.as_deref().map(str::trim).filter(|l| !l.is_empty())
+    }
+
+    fn whisper(&self) -> Option<&uxo_core::whisper::WhisperTranscriber> {
+        self.whisper
+            .get_or_init(|| {
+                match uxo_core::whisper::WhisperTranscriber::managed(&self.data_root, None, Some("auto".into()), &|_| {}) {
+                    Ok(w) => Some(w.with_preferred_language(self.lang().map(str::to_string)).with_prompt(self.prompt.clone())),
+                    Err(e) => {
+                        flog(&self.data_root, &format!("quality: whisper unavailable: {e}"));
+                        None
+                    }
+                }
+            })
+            .as_ref()
+    }
+
+    /// Второй проход по трудным окнам.
+    fn rescue(
+        &self,
+        audio: &[f32],
+        segs: Vec<uxo_core::transcript::Segment>,
+        scores: &[uxo_core::parakeet::WindowScore],
+    ) -> Vec<uxo_core::transcript::Segment> {
+        use uxo_core::rescue::{self as rs, Candidate};
+        use uxo_core::transcript::Segment;
+        const SR: f64 = 16_000.0;
+        let shift = |v: Vec<Segment>, a: f64, b: f64| -> Vec<Segment> {
+            v.into_iter()
+                .map(|mut s| {
+                    s.start_secs = (s.start_secs + a).min(b);
+                    s.end_secs = (s.end_secs + a).min(b);
+                    s
+                })
+                .collect()
+        };
+        let (mut spans, mut fixed) = (Vec::new(), Vec::new());
+        let (mut hard, mut by_denoise, mut by_whisper) = (0usize, 0usize, 0usize);
+        for w in scores {
+            let (ia, ib) = ((w.start_secs * SR) as usize, ((w.end_secs * SR) as usize).min(audio.len()));
+            if ib <= ia {
+                continue;
+            }
+            let window = &audio[ia..ib];
+            let stats = rs::WindowStats {
+                start_secs: w.start_secs,
+                end_secs: w.end_secs,
+                snr_db: uxo_core::enhance::snr_db(window),
+                speech_secs: rs::speech_secs(window),
+                confidence: w.confidence,
+                tokens: w.tokens,
+            };
+            if !rs::is_hard(&stats) {
+                continue;
+            }
+            hard += 1;
+            let mid = |s: &Segment| (s.start_secs + s.end_secs) / 2.0;
+            let orig_words =
+                rs::word_count(segs.iter().filter(|s| mid(s) >= w.start_secs && mid(s) < w.end_secs).map(|s| s.text.as_str()));
+            let orig = Candidate { words: orig_words, confidence: w.confidence };
+            let clean = uxo_core::enhance::denoise(window);
+            let mut best = orig;
+            let mut chosen: Option<Vec<Segment>> = None;
+            if let Ok((alt, conf)) = self.primary.transcribe_samples(&clean) {
+                let cand = Candidate { words: rs::word_count(alt.iter().map(|s| s.text.as_str())), confidence: conf };
+                if rs::better_same_engine(orig, cand) {
+                    best = cand;
+                    chosen = Some(alt);
+                    by_denoise += 1;
+                }
+            }
+            if rs::still_hard(best, stats.speech_secs) {
+                if let Some(wh) = self.whisper() {
+                    if let Ok((alt, prob)) = wh.transcribe_samples(&clean) {
+                        let cand = Candidate { words: rs::word_count(alt.iter().map(|s| s.text.as_str())), confidence: prob };
+                        if rs::accept_whisper(best, cand) {
+                            if chosen.is_some() {
+                                by_denoise -= 1;
+                            }
+                            chosen = Some(alt);
+                            by_whisper += 1;
+                        }
+                    }
+                }
+            }
+            if let Some(alt) = chosen {
+                spans.push((w.start_secs, w.end_secs));
+                fixed.extend(shift(alt, w.start_secs, w.end_secs));
+            }
+        }
+        if hard > 0 {
+            flog(
+                &self.data_root,
+                &format!("second pass: {hard} hard window(s), improved {} (denoise {by_denoise}, whisper {by_whisper})", spans.len()),
+            );
+        }
+        if spans.is_empty() {
+            return segs;
+        }
+        // Окна не пересекаются: правая граница — исключая (как у окон).
+        let spans: Vec<(f64, f64)> = spans.into_iter().map(|(a, b)| (a, b - 1e-6)).collect();
+        uxo_core::langguard::replace_spans(segs, &spans, fixed)
+    }
+
+    /// Реплики не той письменности → Whisper с приоритетным языком.
+    fn language_fix(&self, wav: &Path, segs: Vec<uxo_core::transcript::Segment>) -> AppResult<Vec<uxo_core::transcript::Segment>> {
+        use uxo_core::langguard as lg;
+        let lang = self.lang();
+        let Some(target) = lg::target_script(lang, &segs) else { return Ok(segs) };
+        let duration = lg::wav_duration(wav).unwrap_or(0.0);
+        let spans = lg::mismatch_spans(&segs, target, 0.4, duration);
+        if spans.is_empty() {
+            return Ok(segs);
+        }
+        let secs: f64 = spans.iter().map(|(a, b)| b - a).sum();
+        flog(
+            &self.data_root,
+            &format!("language guard: {} span(s), {secs:.1}s not {target:?} → whisper ({})", spans.len(), lang.unwrap_or("auto")),
+        );
+        let Some(whisper) = self.whisper() else { return Ok(segs) };
+        let mut fixed = Vec::new();
+        for (i, &(a, b)) in spans.iter().enumerate() {
+            let part = wav.with_extension(format!("span{i}.wav"));
+            lg::cut_wav(wav, &part, a, b)?;
+            let redo = whisper.run(&part, &|_, _| {});
+            let _ = std::fs::remove_file(&part);
+            match redo {
+                Ok(redo) => fixed.extend(redo.into_iter().map(|mut s| {
+                    s.start_secs += a;
+                    s.end_secs = (s.end_secs + a).min(b);
+                    s
+                })),
+                Err(e) => {
+                    flog(&self.data_root, &format!("language guard: span {i} failed: {e}"));
+                    // Оставляем исходные реплики этого участка.
+                    return Ok(segs);
+                }
+            }
+        }
+        Ok(lg::replace_spans(segs, &spans, fixed))
+    }
+}
+
+#[cfg(all(feature = "parakeet", feature = "whisper"))]
+impl Asr for QualityGuard {
+    fn run(
+        &self,
+        wav: &Path,
+        progress: &dyn Fn(usize, usize),
+    ) -> AppResult<Vec<uxo_core::transcript::Segment>> {
+        let (segs, scores) = self.primary.transcribe_scored(wav, progress)?;
+        let audio = uxo_core::enhance::read_wav_f32(wav)?;
+        let segs = self.rescue(&audio, segs, &scores);
+        self.language_fix(wav, segs)
+    }
+}
+
 /// Загружает выбранный движок (модель качается только в первый раз).
 #[cfg(any(feature = "whisper", feature = "parakeet"))]
 fn load_asr(
     data_root: &Path,
     model: &str,
     language: Option<String>,
+    vocab: &uxo_core::vocab::Vocabulary,
+    on_download: &dyn Fn(f32),
+) -> AppResult<Box<dyn Asr>> {
+    let inner = load_engine(data_root, model, language, vocab, on_download)?;
+    Ok(Box::new(VocabFix { inner, vocab: vocab.clone() }))
+}
+
+/// Исправляет написание терминов словаря в результате любого движка.
+#[cfg(any(feature = "whisper", feature = "parakeet"))]
+struct VocabFix {
+    inner: Box<dyn Asr>,
+    vocab: uxo_core::vocab::Vocabulary,
+}
+
+#[cfg(any(feature = "whisper", feature = "parakeet"))]
+impl Asr for VocabFix {
+    fn run(
+        &self,
+        wav: &Path,
+        progress: &dyn Fn(usize, usize),
+    ) -> AppResult<Vec<uxo_core::transcript::Segment>> {
+        let mut segs = self.inner.run(wav, progress)?;
+        for s in &mut segs {
+            s.text = self.vocab.correct(&s.text);
+        }
+        Ok(segs)
+    }
+}
+
+#[cfg(any(feature = "whisper", feature = "parakeet"))]
+fn load_engine(
+    data_root: &Path,
+    model: &str,
+    language: Option<String>,
+    vocab: &uxo_core::vocab::Vocabulary,
     on_download: &dyn Fn(f32),
 ) -> AppResult<Box<dyn Asr>> {
     if uxo_core::models::is_parakeet(model) {
         #[cfg(feature = "parakeet")]
         {
-            let _ = language;
-            return Ok(Box::new(uxo_core::parakeet::ParakeetTranscriber::managed(
-                data_root,
-                on_download,
-            )?));
+            let parakeet = uxo_core::parakeet::ParakeetTranscriber::managed(data_root, on_download)?;
+            // Трудные окна и реплики «не на том языке» — второй проход (QualityGuard).
+            #[cfg(feature = "whisper")]
+            return Ok(Box::new(QualityGuard {
+                primary: parakeet,
+                language,
+                prompt: vocab.prompt(),
+                data_root: data_root.to_path_buf(),
+                whisper: std::cell::OnceCell::new(),
+            }));
+            #[cfg(not(feature = "whisper"))]
+            {
+                let _ = (language, vocab);
+                return Ok(Box::new(parakeet));
+            }
         }
         #[cfg(not(feature = "parakeet"))]
         return Err(AppError::InvalidState(
@@ -769,16 +994,14 @@ fn load_asr(
     }
     #[cfg(feature = "whisper")]
     {
-        Ok(Box::new(uxo_core::whisper::WhisperTranscriber::managed(
-            data_root,
-            Some(model),
-            language,
-            on_download,
-        )?))
+        Ok(Box::new(
+            uxo_core::whisper::WhisperTranscriber::managed(data_root, Some(model), language, on_download)?
+                .with_prompt(vocab.prompt()),
+        ))
     }
     #[cfg(not(feature = "whisper"))]
     {
-        let _ = (data_root, language, on_download);
+        let _ = (data_root, language, vocab, on_download);
         Err(AppError::InvalidState(
             "Whisper недоступен в этой сборке — выберите Parakeet в настройках".into(),
         ))
@@ -1077,7 +1300,8 @@ fn named_transcript_text(
     if transcript.segments.is_empty() {
         return Err(AppError::InvalidState("в расшифровке нет текста".into()));
     }
-    Ok(uxo_core::ai::transcript_to_named_text(&transcript, &ctx.names))
+    let text = uxo_core::ai::transcript_to_named_text(&transcript, &ctx.names);
+    Ok(if ctx.censor { uxo_core::profanity::censor(&text) } else { text })
 }
 
 /// Строит ИИ-отчёт вида `kind` ("summary" | "tasks" | "analysis" | "literary" |
