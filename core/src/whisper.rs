@@ -22,6 +22,22 @@ pub struct WhisperTranscriber {
     ctx: WhisperContext,
     /// Код языка (напр. "ru"); `None` — автоопределение.
     language: Option<String>,
+    /// При автоопределении — приоритетный язык: берётся, если модель не
+    /// уверена в другом (см. [`pick_language`]).
+    prefer: Option<String>,
+    /// Подсказка модели: термины из словаря (`initial_prompt`).
+    prompt: Option<String>,
+}
+
+/// Выбор языка окна по вероятностям Whisper: приоритетный — если он не
+/// исключён явно; другой — только когда модель в нём уверена (≥ 0.7), а у
+/// приоритетного шансов почти нет (< 0.1).
+pub fn pick_language(prefer: &str, detected: &str, p_detected: f32, p_prefer: f32) -> String {
+    if detected != prefer && p_detected >= 0.7 && p_prefer < 0.1 {
+        detected.to_string()
+    } else {
+        prefer.to_string()
+    }
 }
 
 /// Модель по умолчанию — см. [`crate::models::DEFAULT_WHISPER`].
@@ -74,7 +90,40 @@ impl WhisperTranscriber {
             WhisperContextParameters::default(),
         )
         .map_err(|e| AppError::Audio(format!("whisper: cannot load model: {e}")))?;
-        Ok(Self { ctx, language })
+        Ok(Self { ctx, language, prefer: None, prompt: None })
+    }
+
+    /// Автоопределение языка с приоритетным `prefer` (для участков, где
+    /// основной движок мог ошибиться языком).
+    pub fn with_preferred_language(mut self, prefer: Option<String>) -> Self {
+        let prefer = prefer.map(|p| p.trim().to_lowercase()).filter(|p| !p.is_empty() && p != "auto");
+        if prefer.is_some() {
+            self.language = Some("auto".into());
+        }
+        self.prefer = prefer;
+        self
+    }
+
+    /// Подсказка модели (термины словаря).
+    pub fn with_prompt(mut self, prompt: Option<String>) -> Self {
+        self.prompt = prompt.filter(|p| !p.trim().is_empty() && !p.contains('\0'));
+        self
+    }
+
+    /// Язык окна: автоопределение Whisper с приоритетом `prefer`. Ошибка
+    /// определения → приоритетный язык.
+    fn detect_preferring(&self, state: &mut whisper_rs::WhisperState, chunk: &[f32], prefer: &str, threads: usize) -> String {
+        let detected = state
+            .pcm_to_mel(chunk, threads.max(1))
+            .ok()
+            .and_then(|_| state.lang_detect(0, threads.max(1)).ok());
+        let Some((id, probs)) = detected else { return prefer.to_string() };
+        let name = whisper_rs::get_lang_str(id).unwrap_or(prefer);
+        let p_det = probs.get(id.max(0) as usize).copied().unwrap_or(0.0);
+        let p_pref = whisper_rs::get_lang_id(prefer)
+            .and_then(|i| probs.get(i.max(0) as usize).copied())
+            .unwrap_or(0.0);
+        pick_language(prefer, name, p_det, p_pref)
     }
 
     /// Читает WAV (i16 моно) и нормализует в f32 [-1.0, 1.0].
@@ -129,9 +178,20 @@ impl WhisperTranscriber {
                 patience: -1.0,
             });
             params.set_n_threads(n_threads);
+            let mut window_lang: Option<String> = None;
             match self.language.as_deref() {
-                Some("auto") | None => {}
+                Some("auto") | None => {
+                    if let Some(prefer) = self.prefer.as_deref() {
+                        window_lang = Some(self.detect_preferring(&mut state, chunk, prefer, n_threads as usize));
+                    }
+                }
                 Some(lang) => params.set_language(Some(lang)),
+            }
+            if let Some(l) = window_lang.as_deref() {
+                params.set_language(Some(l));
+            }
+            if let Some(p) = self.prompt.as_deref() {
+                params.set_initial_prompt(p);
             }
             params.set_translate(false);
             // Не опираться на предыдущий текст — меньше зацикленных галлюцинаций.
@@ -186,5 +246,18 @@ impl WhisperTranscriber {
 impl Transcriber for WhisperTranscriber {
     fn transcribe(&self, wav_path: &Path) -> AppResult<Vec<Segment>> {
         self.transcribe_windowed(wav_path, DEFAULT_WINDOW_SECS, &|_, _| {})
+    }
+}
+
+#[cfg(test)]
+mod lang_tests {
+    use super::pick_language;
+
+    #[test]
+    fn preferred_language_wins_unless_clearly_other() {
+        assert_eq!(pick_language("ru", "en", 0.55, 0.3), "ru");
+        assert_eq!(pick_language("ru", "en", 0.92, 0.03), "en");
+        assert_eq!(pick_language("ru", "ru", 0.9, 0.9), "ru");
+        assert_eq!(pick_language("ru", "uk", 0.75, 0.2), "ru");
     }
 }

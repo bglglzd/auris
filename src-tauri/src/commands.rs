@@ -565,10 +565,12 @@ pub async fn transcribe(
             uxo_core::models::pick_model(options.model.as_deref(), options.language.as_deref())
                 .to_string();
         flog(&state.data_root, &format!("transcribe: model {model}"));
+        let vocab = uxo_core::vocab::Vocabulary::new(options.vocabulary.as_deref().unwrap_or(""), true);
         let transcriber = load_asr(
             &state.data_root,
             &model,
             options.language.clone(),
+            &vocab,
             &|frac| emit("download", frac * 100.0, 0, 0),
         )?;
 
@@ -745,22 +747,140 @@ impl Asr for uxo_core::parakeet::ParakeetTranscriber {
     }
 }
 
+/// Parakeet + контроль языка. Parakeet определяет язык сам и на неразборчивом
+/// участке может выдать другой язык (латиницу вместо русского). Такие участки
+/// перераспознаёт Whisper: с языком из настроек (приоритетный язык), а при
+/// «auto» — со своим автоопределением. Всё локально; Whisper грузится, только
+/// если такие участки нашлись.
+#[cfg(all(feature = "parakeet", feature = "whisper"))]
+struct LanguageGuard {
+    primary: uxo_core::parakeet::ParakeetTranscriber,
+    language: Option<String>,
+    prompt: Option<String>,
+    data_root: PathBuf,
+    whisper: std::cell::OnceCell<Option<uxo_core::whisper::WhisperTranscriber>>,
+}
+
+#[cfg(all(feature = "parakeet", feature = "whisper"))]
+impl Asr for LanguageGuard {
+    fn run(
+        &self,
+        wav: &Path,
+        progress: &dyn Fn(usize, usize),
+    ) -> AppResult<Vec<uxo_core::transcript::Segment>> {
+        use uxo_core::langguard as lg;
+        let segs = self.primary.run(wav, progress)?;
+        let lang = self.language.as_deref().map(str::trim).filter(|l| !l.is_empty());
+        let Some(target) = lg::target_script(lang, &segs) else { return Ok(segs) };
+        let duration = lg::wav_duration(wav).unwrap_or(0.0);
+        let spans = lg::mismatch_spans(&segs, target, 0.4, duration);
+        if spans.is_empty() {
+            return Ok(segs);
+        }
+        let secs: f64 = spans.iter().map(|(a, b)| b - a).sum();
+        flog(
+            &self.data_root,
+            &format!("language guard: {} span(s), {secs:.1}s not {target:?} → whisper ({})", spans.len(), lang.unwrap_or("auto")),
+        );
+        let whisper = self.whisper.get_or_init(|| {
+            // Whisper сам определяет язык участка; язык из настроек —
+            // приоритетный (английская фраза-термин останется английской,
+            // неразборчивая русская речь — русской).
+            match uxo_core::whisper::WhisperTranscriber::managed(&self.data_root, None, Some("auto".into()), &|_| {}) {
+                Ok(w) => Some(
+                    w.with_preferred_language(lang.map(str::to_string)).with_prompt(self.prompt.clone()),
+                ),
+                Err(e) => {
+                    flog(&self.data_root, &format!("language guard: whisper unavailable: {e}"));
+                    None
+                }
+            }
+        });
+        let Some(whisper) = whisper else { return Ok(segs) };
+        let mut fixed = Vec::new();
+        for (i, &(a, b)) in spans.iter().enumerate() {
+            let part = wav.with_extension(format!("span{i}.wav"));
+            lg::cut_wav(wav, &part, a, b)?;
+            let redo = whisper.run(&part, &|_, _| {});
+            let _ = std::fs::remove_file(&part);
+            match redo {
+                Ok(redo) => fixed.extend(redo.into_iter().map(|mut s| {
+                    s.start_secs += a;
+                    s.end_secs = (s.end_secs + a).min(b);
+                    s
+                })),
+                Err(e) => {
+                    flog(&self.data_root, &format!("language guard: span {i} failed: {e}"));
+                    // Оставляем исходные реплики этого участка.
+                    return Ok(segs);
+                }
+            }
+        }
+        Ok(lg::replace_spans(segs, &spans, fixed))
+    }
+}
+
 /// Загружает выбранный движок (модель качается только в первый раз).
 #[cfg(any(feature = "whisper", feature = "parakeet"))]
 fn load_asr(
     data_root: &Path,
     model: &str,
     language: Option<String>,
+    vocab: &uxo_core::vocab::Vocabulary,
+    on_download: &dyn Fn(f32),
+) -> AppResult<Box<dyn Asr>> {
+    let inner = load_engine(data_root, model, language, vocab, on_download)?;
+    Ok(Box::new(VocabFix { inner, vocab: vocab.clone() }))
+}
+
+/// Исправляет написание терминов словаря в результате любого движка.
+#[cfg(any(feature = "whisper", feature = "parakeet"))]
+struct VocabFix {
+    inner: Box<dyn Asr>,
+    vocab: uxo_core::vocab::Vocabulary,
+}
+
+#[cfg(any(feature = "whisper", feature = "parakeet"))]
+impl Asr for VocabFix {
+    fn run(
+        &self,
+        wav: &Path,
+        progress: &dyn Fn(usize, usize),
+    ) -> AppResult<Vec<uxo_core::transcript::Segment>> {
+        let mut segs = self.inner.run(wav, progress)?;
+        for s in &mut segs {
+            s.text = self.vocab.correct(&s.text);
+        }
+        Ok(segs)
+    }
+}
+
+#[cfg(any(feature = "whisper", feature = "parakeet"))]
+fn load_engine(
+    data_root: &Path,
+    model: &str,
+    language: Option<String>,
+    vocab: &uxo_core::vocab::Vocabulary,
     on_download: &dyn Fn(f32),
 ) -> AppResult<Box<dyn Asr>> {
     if uxo_core::models::is_parakeet(model) {
         #[cfg(feature = "parakeet")]
         {
-            let _ = language;
-            return Ok(Box::new(uxo_core::parakeet::ParakeetTranscriber::managed(
-                data_root,
-                on_download,
-            )?));
+            let parakeet = uxo_core::parakeet::ParakeetTranscriber::managed(data_root, on_download)?;
+            // Реплики «не на том языке» перераспознаёт Whisper (см. LanguageGuard).
+            #[cfg(feature = "whisper")]
+            return Ok(Box::new(LanguageGuard {
+                primary: parakeet,
+                language,
+                prompt: vocab.prompt(),
+                data_root: data_root.to_path_buf(),
+                whisper: std::cell::OnceCell::new(),
+            }));
+            #[cfg(not(feature = "whisper"))]
+            {
+                let _ = (language, vocab);
+                return Ok(Box::new(parakeet));
+            }
         }
         #[cfg(not(feature = "parakeet"))]
         return Err(AppError::InvalidState(
@@ -769,16 +889,14 @@ fn load_asr(
     }
     #[cfg(feature = "whisper")]
     {
-        Ok(Box::new(uxo_core::whisper::WhisperTranscriber::managed(
-            data_root,
-            Some(model),
-            language,
-            on_download,
-        )?))
+        Ok(Box::new(
+            uxo_core::whisper::WhisperTranscriber::managed(data_root, Some(model), language, on_download)?
+                .with_prompt(vocab.prompt()),
+        ))
     }
     #[cfg(not(feature = "whisper"))]
     {
-        let _ = (data_root, language, on_download);
+        let _ = (data_root, language, vocab, on_download);
         Err(AppError::InvalidState(
             "Whisper недоступен в этой сборке — выберите Parakeet в настройках".into(),
         ))

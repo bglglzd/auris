@@ -11,6 +11,7 @@ pub mod decode;
 pub mod diarize;
 pub mod edit;
 pub mod error;
+pub mod langguard;
 pub mod model;
 pub mod models;
 pub mod nemo_mel;
@@ -20,6 +21,7 @@ pub mod recorder;
 pub mod service;
 pub mod storage;
 pub mod transcript;
+pub mod vocab;
 pub mod transcriber;
 
 #[cfg(feature = "whisper")]

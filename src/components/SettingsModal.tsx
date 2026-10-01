@@ -38,6 +38,25 @@ function Switch({
   );
 }
 
+/// Языки речи для выбора в настройках (код Whisper → название).
+const SPEECH_LANGUAGES: [string, string][] = [
+  ["ru", "Русский"],
+  ["en", "English"],
+  ["uk", "Українська"],
+  ["be", "Беларуская"],
+  ["kk", "Қазақша"],
+  ["de", "Deutsch"],
+  ["fr", "Français"],
+  ["es", "Español"],
+  ["it", "Italiano"],
+  ["pt", "Português"],
+  ["pl", "Polski"],
+  ["tr", "Türkçe"],
+  ["zh", "中文"],
+  ["ja", "日本語"],
+  ["auto", "Определять автоматически"],
+];
+
 export function SettingsModal({ onClose }: { onClose: () => void }) {
   const [s, setS] = useState<AppSettings>(getSettings());
   const [proc, setProc] = useState("");
@@ -392,16 +411,36 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
               />
             </div>
             <div className="field">
-              <label>Язык</label>
-              <input
-                value={s.whisper.language}
-                onChange={(e) => wh("language", e.target.value)}
-                placeholder="ru"
+              <label htmlFor="asr-lang">Основной язык речи</label>
+              <select id="asr-lang" value={s.whisper.language || "ru"} onChange={(e) => wh("language", e.target.value)}>
+                {SPEECH_LANGUAGES.map(([code, name]) => (
+                  <option key={code} value={code}>
+                    {name}
+                  </option>
+                ))}
+                {!SPEECH_LANGUAGES.some(([c]) => c === (s.whisper.language || "ru")) && (
+                  <option value={s.whisper.language}>{s.whisper.language}</option>
+                )}
+              </select>
+              <span className="hint">
+                Приоритетный язык: если фрагмент распознался на другом языке (латиница вместо русского),
+                Memiro перепроверит его на слух и оставит другой язык, только если он там действительно
+                звучит. «Определять автоматически» — для встреч на нескольких языках.
+              </span>
+            </div>
+            <div className="field">
+              <label htmlFor="asr-vocab">Словарь: термины, имена, команды</label>
+              <textarea
+                id="asr-vocab"
+                rows={3}
+                value={s.whisper.vocabulary ?? ""}
+                onChange={(e) => wh("vocabulary", e.target.value)}
+                placeholder={"Например:\nJira, Kubernetes, CI/CD\nАлексей Петров, ООО «Вектор»"}
               />
               <span className="hint">
-                По умолчанию «ru». Впиши «auto» для автоопределения. Parakeet
-                определяет язык сам; если выбран язык вне его 25 — Memiro
-                автоматически возьмёт Whisper.
+                По строке или через запятую. Memiro пишет эти слова так, как здесь (например, «джира» →
+                Jira). Популярные сервисы — Jira, Slack, GitHub, Figma и др. — уже знает. Словарь хранится
+                только на этом устройстве.
               </span>
             </div>
             <details className="adv">

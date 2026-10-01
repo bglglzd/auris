@@ -15,7 +15,7 @@ const VERSION = 2;
 
 const DEFAULTS: AppSettings = {
   ai: { base_url: "", api_key: "", model: "" },
-  whisper: { whisperPath: "", model: DEFAULT_MODEL, language: "ru" },
+  whisper: { whisperPath: "", model: DEFAULT_MODEL, language: "ru", vocabulary: "" },
   hotkey: defaultHotkey(),
   autoRecord: {
     enabled: false,

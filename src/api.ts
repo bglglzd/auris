@@ -34,6 +34,7 @@ function whisperOptions(w: WhisperConfig) {
     whisperPath: w.whisperPath || undefined,
     model: w.model || undefined,
     language: w.language || undefined,
+    vocabulary: w.vocabulary?.trim() || undefined,
   };
 }
 

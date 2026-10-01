@@ -3870,7 +3870,8 @@ details.adv[open] summary::before {
 .bug-modal .field input {
   width: 100%;
 }
-.bug-modal textarea {
+.bug-modal textarea,
+.field textarea {
   width: 100%;
   resize: vertical;
   min-height: 64px;
@@ -3885,7 +3886,8 @@ details.adv[open] summary::before {
   box-sizing: border-box;
   outline: none;
 }
-.bug-modal textarea:focus {
+.bug-modal textarea:focus,
+.field textarea:focus {
   border-color: var(--accent-strong);
 }
 .bug-tabs {

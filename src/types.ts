@@ -48,6 +48,8 @@ export interface WhisperConfig {
   whisperPath: string;
   model: string;
   language: string;
+  /// Словарь: термины, имена, команды — по строке или через запятую.
+  vocabulary: string;
 }
 
 /// Авто-запись звонков: следим за аудио-сессиями выбранных приложений и
