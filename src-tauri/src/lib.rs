@@ -465,6 +465,7 @@ pub fn run() {
             commands::set_autorecord,
             commands::recluster_speakers,
             commands::has_voice_analysis,
+            commands::voice_analysis_track,
             commands::models_status,
             commands::download_model,
             commands::delete_model,

@@ -40,6 +40,54 @@ pub fn read_wav_f32(path: &std::path::Path) -> crate::error::AppResult<Vec<f32>>
         .map_err(|e| crate::error::AppError::Audio(e.to_string()))
 }
 
+/// Подавление треска: короткий выброс (≤ 2 мс), резко выбивающийся из
+/// окружения (в 8 раз выше среднего перепада за ~16 мс), заменяется плавной
+/// интерполяцией соседних отсчётов. Речь (плавная по сравнению с щелчком) не
+/// задевается.
+pub fn declick(samples: &[f32]) -> Vec<f32> {
+    let n = samples.len();
+    let mut out = samples.to_vec();
+    if n < 64 {
+        return out;
+    }
+    // Перепад второго порядка: щелчок — острый пик, речь — плавная.
+    let d: Vec<f32> = (0..n)
+        .map(|i| if i == 0 || i + 1 == n { 0.0 } else { (samples[i] - 0.5 * (samples[i - 1] + samples[i + 1])).abs() })
+        .collect();
+    const HALF: usize = 128;
+    let mut prefix = vec![0.0f64; n + 1];
+    for i in 0..n {
+        prefix[i + 1] = prefix[i] + d[i] as f64;
+    }
+    let local = |i: usize| {
+        let (a, b) = (i.saturating_sub(HALF), (i + HALF).min(n));
+        ((prefix[b] - prefix[a]) / (b - a) as f64) as f32
+    };
+    let max_len = SR * 2 / 1000; // 2 мс
+    let mut i = 1;
+    while i + 1 < n {
+        let scale = local(i).max(1e-4);
+        if d[i] > 8.0 * scale && d[i] > 0.02 {
+            // Длина выброса: пока перепад остаётся аномальным.
+            let start = i.saturating_sub(1);
+            let mut end = i + 1;
+            while end < n - 1 && end - start < max_len && d[end] > 3.0 * scale {
+                end += 1;
+            }
+            let (a, b) = (out[start], samples[(end + 1).min(n - 1)]);
+            let len = (end + 1 - start) as f32;
+            for (k, v) in out[start..=end.min(n - 1)].iter_mut().enumerate() {
+                let t = k as f32 / len;
+                *v = a + (b - a) * t;
+            }
+            i = end + 1;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
 /// Окно Ханна длины `n`.
 fn hann(n: usize) -> Vec<f64> {
     (0..n).map(|i| 0.5 - 0.5 * (2.0 * std::f64::consts::PI * i as f64 / n as f64).cos()).collect()
@@ -53,6 +101,9 @@ pub fn denoise(samples: &[f32]) -> Vec<f32> {
     if samples.len() < N_FFT * 4 {
         return samples.to_vec();
     }
+    // Сначала треск и щелчки (импульсы), потом ровный шум.
+    let declicked = declick(samples);
+    let samples = &declicked[..];
     let win = hann(N_FFT);
     let bins = N_FFT / 2 + 1;
     let frames = (samples.len() - N_FFT) / HOP + 1;
@@ -174,6 +225,23 @@ mod tests {
         assert!(c > 30.0, "clean {c}");
         assert!(n < 15.0, "noisy {n}");
         assert!(snr_db(&vec![0.0; SR * 3]).is_none());
+    }
+
+    #[test]
+    fn declick_removes_crackle_but_keeps_speech() {
+        let s = speech(SR * 3);
+        let mut crackly = s.clone();
+        // Треск: редкие острые импульсы.
+        for k in 0..60 {
+            let i = 1000 + k * 731;
+            crackly[i] += if k % 2 == 0 { 0.7 } else { -0.6 };
+            crackly[i + 1] -= 0.3;
+        }
+        let fixed = declick(&crackly);
+        let (before, after) = (snr_vs(&s, &crackly), snr_vs(&s, &fixed));
+        assert!(after > before + 6.0, "before {before:.1} dB, after {after:.1} dB");
+        // Чистая «речь» почти не меняется.
+        assert!(snr_vs(&s, &declick(&s)) > 40.0);
     }
 
     #[test]

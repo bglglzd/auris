@@ -51,8 +51,14 @@ pub const MIN_SNR_DB: f32 = 12.0;
 
 /// Нужен ли окну второй проход.
 pub fn is_hard(w: &WindowStats) -> bool {
-    if w.snr_db.is_none() || w.speech_secs < 1.0 {
-        return false; // тишина/пара звуков — перепроверять нечего
+    let Some(snr) = w.snr_db else { return false }; // тишина — перепроверять нечего
+    // Сильный ровный шум: речь едва выше фона и по громкости не выделяется
+    // (speech_secs ≈ 0) — проверяем по SNR, иначе второй проход не начнётся.
+    if snr < MIN_SNR_DB {
+        return true;
+    }
+    if w.speech_secs < 1.0 {
+        return false; // пара звуков — перепроверять нечего
     }
     let rate = w.tokens as f32 / w.speech_secs;
     rate < MIN_TOKENS_PER_SPEECH_SEC
@@ -117,7 +123,9 @@ mod tests {
         assert!(is_hard(&w(Some(9.0), 8.0, Some(0.95), 30)));
         // Тишина — нечего перепроверять.
         assert!(!is_hard(&w(None, 0.0, None, 0)));
-        assert!(!is_hard(&w(Some(10.0), 0.4, None, 0)));
+        assert!(!is_hard(&w(Some(20.0), 0.4, None, 0)));
+        // Сильный ровный шум: речь по громкости не выделяется, но окно трудное.
+        assert!(is_hard(&w(Some(4.0), 0.2, None, 0)));
     }
 
     #[test]

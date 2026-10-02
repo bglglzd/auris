@@ -91,6 +91,15 @@ pub fn merge_tracks(mic: Vec<Segment>, system: Vec<Segment>) -> Transcript {
 /// Строит ленту из ОДНОЙ дорожки: всем сегментам присваивается один говорящий
 /// `speaker`. Пустые тексты пропускаются. Для импортированных записей без
 /// диаризации (один голос); диаризация на несколько говорящих появится в M3.
+/// Живая встреча, записанная микрофоном: в дорожке звонка речи почти нет
+/// (меньше 10 % слов микрофона), а в микрофоне она есть (≥ 20 слов). Тогда
+/// голоса делятся по дорожке микрофона, а не по дорожке звонка.
+pub fn is_in_person(mic: &[Segment], system: &[Segment]) -> bool {
+    let words = |v: &[Segment]| v.iter().map(|s| s.text.split_whitespace().count()).sum::<usize>();
+    let (m, sys) = (words(mic), words(system));
+    m >= 20 && sys * 10 < m
+}
+
 pub fn single_speaker(segments: Vec<Segment>, speaker: &str) -> Transcript {
     let segments = segments
         .into_iter()
@@ -249,6 +258,18 @@ fn dist_to(mid: f64, d: &DiarSegment) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detects_in_person_meetings() {
+        let seg = |n: usize| Segment { start_secs: 0.0, end_secs: 1.0, text: vec!["слово"; n].join(" ") };
+        // Живая встреча: всё в микрофоне.
+        assert!(is_in_person(&[seg(30), seg(40)], &[]));
+        assert!(is_in_person(&[seg(100)], &[seg(3)]));
+        // Звонок: собеседники в дорожке звонка.
+        assert!(!is_in_person(&[seg(100)], &[seg(60)]));
+        // Слишком мало речи, чтобы судить.
+        assert!(!is_in_person(&[seg(10)], &[]));
+    }
 
     fn seg(start: f64, text: &str) -> Segment {
         Segment { start_secs: start, end_secs: start + 1.0, text: text.into() }

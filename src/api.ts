@@ -57,6 +57,7 @@ export const api = {
     whisper: WhisperConfig,
     speakerCount?: number | null,
     solo?: boolean,
+    totalVoices?: boolean,
   ): Promise<Transcript> => {
     logInfo(
       `transcribe start id=${id} model=${whisper.model || "default"} speakers=${speakerCount ?? "auto"}${solo ? " solo" : ""}`,
@@ -66,6 +67,7 @@ export const api = {
       options: whisperOptions(whisper),
       speakerCount: speakerCount ?? null,
       solo: solo ?? null,
+      totalVoices: totalVoices ?? null,
     });
   },
   getTranscript: (id: string): Promise<Transcript | null> =>
@@ -143,6 +145,9 @@ export const api = {
   /// Есть ли у встречи сохранённый анализ голосов.
   hasVoiceAnalysis: (id: string): Promise<boolean> =>
     inv("has_voice_analysis", { id }),
+  /// Какая дорожка разделена по голосам: system.wav / mic.wav (живая встреча) / audio.wav.
+  voiceAnalysisTrack: (id: string): Promise<string | null> =>
+    inv("voice_analysis_track", { id }),
 
   // ---- Модели ----
   modelsStatus: (): Promise<ModelInfo[]> => inv("models_status"),

@@ -23,7 +23,8 @@ import { CopyButton } from "./CopyButton";
 interface Props {
   meeting: Meeting;
   transState?: TranscribeState;
-  onTranscribe: (speakerCount: number | null, solo: boolean) => void;
+  /// `totalVoices` — число означает всех голосов (живая встреча), а не собеседников.
+  onTranscribe: (speakerCount: number | null, solo: boolean, totalVoices?: boolean) => void;
   onMetaSaved: () => void;
 }
 
@@ -39,6 +40,11 @@ function plural(n: number, one: string, few: string, many: string): string {
 export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: Props) {
   // Импортированная запись — одна дорожка audio.wav (без разделения «Я/Собеседник»).
   const isImported = meeting.source === "imported";
+  // Живая встреча, записанная микрофоном: голоса разделены в дорожке
+  // микрофона — число в интерфейсе означает всех голосов, как у импорта.
+  const [voiceTrack, setVoiceTrack] = useState<string | null>(null);
+  const isRoom = !isImported && voiceTrack === "mic.wav";
+  const allVoices = isImported || isRoom;
   // Соло-режим «я один»: помечается при старте записи (см. App.handleStart).
   // Расшифровываем только микрофон, один голос «Я», без диаризации.
   const isSolo =
@@ -122,6 +128,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
     api.getTranscript(meeting.id).then(setTranscript).catch(() => {});
     api.getReports(meeting.id).then(setReports).catch(() => {});
     api.hasVoiceAnalysis(meeting.id).then(setHasVoices).catch(() => setHasVoices(false));
+    api.voiceAnalysisTrack(meeting.id).then(setVoiceTrack).catch(() => setVoiceTrack(null));
   }, [meeting.id, isImported]);
 
   // Встречу поправили извне (меню «⋯» в списке, авто-заголовок) — подтягиваем.
@@ -165,6 +172,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
       setNotice("");
       api.getTranscript(meeting.id).then(setTranscript).catch(() => {});
       api.hasVoiceAnalysis(meeting.id).then(setHasVoices).catch(() => {});
+      api.voiceAnalysisTrack(meeting.id).then(setVoiceTrack).catch(() => {});
     }
   }, [transState?.doneToken, meeting.id]);
 
@@ -375,7 +383,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
 
   // Соло-режим расшифровывает только микрофон одним голосом — выбор числа
   // собеседников не нужен. Вызов передаёт флаг соло в бэкенд.
-  const doTranscribe = () => onTranscribe(isSolo ? 1 : speakerCountValue(), isSolo);
+  const doTranscribe = () => onTranscribe(isSolo ? 1 : speakerCountValue(), isSolo, isRoom);
 
   const speakerOptions = [1, 2, 3, 4, 5, 6, 7, 8];
   const speakerSelect = isSolo ? (
@@ -389,10 +397,10 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
       onChange={(e) => updateSpeakerSel(e.target.value)}
       title="Сколько голосов в записи — для разделения говорящих"
     >
-      <option value="auto">{isImported ? "Голосов: авто" : "Собеседников: авто"}</option>
+      <option value="auto">{allVoices ? "Голосов: авто" : "Собеседников: авто"}</option>
       {speakerOptions.map((n) => (
         <option key={n} value={String(n)}>
-          {isImported
+          {allVoices
             ? `${n} ${plural(n, "голос", "голоса", "голосов")}`
             : `${n} ${plural(n, "собеседник", "собеседника", "собеседников")}`}
         </option>
@@ -663,7 +671,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
             <SpeakersPanel
               transcript={transcript!}
               labels={labels}
-              recorded={!isImported}
+              recorded={!allVoices}
               count={speakerSel}
               canRecluster={hasVoices}
               busy={reclustering}

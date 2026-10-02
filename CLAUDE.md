@@ -106,6 +106,9 @@ Windows, `#[cfg(windows)]`), `mac_recorder` (macOS: микрофон через 
   рабочим путём импорта. Лог: `transcribed: mic=N segs, system=N segs`.
 - Записанная встреча: `mic` (=«Я») + `system` (=«Собеседник») → `merge_tracks`.
   При выборе ≥2 собеседников системная дорожка диаризуется (`assign_speakers`).
+  **Живая встреча** (v0.13.1, `transcript::is_in_person`: в звонке < 10 % слов
+  микрофона): диаризуется `mic.wav` (кеш с `track = "mic.wav"`, команда
+  `voice_analysis_track`), число в интерфейсе — всех голосов (`total_voices`).
 - Импортированная встреча: одна дорожка `audio.wav` → whisper → (с фичей diarize)
   диаризация на N голосов.
 
@@ -166,7 +169,8 @@ e2e-тест `core/tests/diarize_e2e.rs` (`-- --ignored`, в CI на Windows).
 `QualityGuard` (commands.rs, Parakeet + Whisper): (1) **второй проход** —
 окна Parakeet с низкой уверенностью (`parakeet::WindowScore`, softmax токена),
 SNR < 12 дБ (`enhance::snr_db`) или «речь есть, слов нет» (перебивания —
-Parakeet молчит) → Parakeet по `enhance::denoise` (спектральный гейт) →
+Parakeet молчит; сильный ровный шум — всегда) → Parakeet по `enhance::denoise`
+(`declick` от треска + спектральный гейт) →
 при неудаче Whisper; выбор — `rescue.rs` по уверенности. Замеры —
 `--example noise_eval`. (2) **контроль языка** — `langguard.rs`: реплики не той
 письменности → Whisper с `with_preferred_language` (`pick_language`: приоритет

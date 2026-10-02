@@ -504,7 +504,11 @@ pub async fn transcribe(
     // микрофон, всем сегментам говорящий «Я», без дорожки собеседника и
     // диаризации. Игнорируется для импортированных встреч.
     solo: Option<bool>,
+    // Число — всех голосов записи (живая встреча, известная по прошлой
+    // расшифровке), а не собеседников.
+    total_voices: Option<bool>,
 ) -> AppResult<Transcript> {
+    let _ = &total_voices; // нужен только с фичей diarize
     // Импортированная встреча — одна дорожка audio.wav; записанная — mic+system.
     let imported = state.repo.lock().unwrap().get(&id)?.source == "imported";
     let solo = !imported && solo.unwrap_or(false);
@@ -669,11 +673,28 @@ pub async fn transcribe(
 
             #[cfg(feature = "diarize")]
             {
-                if will_diarize && !system_segs.is_empty() {
-                    use uxo_core::transcript::{
-                        assign_speakers, collapse_single_speaker, merge_transcripts, single_speaker,
-                        THEM,
-                    };
+                use uxo_core::transcript::{
+                    assign_speakers, collapse_single_speaker, is_in_person, merge_transcripts, single_speaker,
+                    ME, THEM,
+                };
+                if is_in_person(&mic_segs, &system_segs) {
+                    // Живая встреча: все голоса — в микрофоне; делим его.
+                    // Число в интерфейсе — собеседники, значит голосов N + 1.
+                    flog(&state.data_root, "in-person meeting: diarizing mic track");
+                    let diar = diarize_track(
+                        &state.data_root,
+                        &id,
+                        "mic.wav",
+                        &mic_path,
+                        if total_voices.unwrap_or(false) { wanted } else { wanted.map(|n| n + 1) },
+                        &|frac| emit("download-voices", frac * 100.0, 0, 0),
+                        &|done, total| {
+                            emit("diarize", sys_end + done as f32 / total.max(1) as f32 * (100.0 - sys_end), done, total)
+                        },
+                    )?;
+                    let room = collapse_single_speaker(assign_speakers(mic_segs, diar), ME);
+                    merge_transcripts(room, single_speaker(system_segs, THEM))
+                } else if will_diarize && !system_segs.is_empty() {
                     let diar = diarize_track(
                         &state.data_root,
                         &id,
@@ -687,7 +708,7 @@ pub async fn transcribe(
                     )?;
                     // Один голос у собеседников → привычный «Собеседник».
                     let them = collapse_single_speaker(assign_speakers(system_segs, diar), THEM);
-                    let me = single_speaker(mic_segs, uxo_core::transcript::ME);
+                    let me = single_speaker(mic_segs, ME);
                     merge_transcripts(me, them)
                 } else {
                     merge_tracks(mic_segs, system_segs)
@@ -839,7 +860,7 @@ impl QualityGuard {
                     by_denoise += 1;
                 }
             }
-            if rs::still_hard(best, stats.speech_secs) {
+            if rs::still_hard(best, rs::speech_secs(&clean).max(stats.speech_secs)) {
                 if let Some(wh) = self.whisper() {
                     if let Ok((alt, prob)) = wh.transcribe_samples(&clean) {
                         let cand = Candidate { words: rs::word_count(alt.iter().map(|s| s.text.as_str())), confidence: prob };
@@ -1078,6 +1099,13 @@ pub async fn recluster_speakers(
     .await
     .map_err(|e| AppError::Audio(format!("recluster join: {e}")))??;
     Ok(t)
+}
+
+/// Какая дорожка разделена по голосам: `system.wav` (звонок), `mic.wav`
+/// (живая встреча), `audio.wav` (импорт); `None` — анализа нет.
+#[tauri::command]
+pub fn voice_analysis_track(state: tauri::State<AppState>, id: String) -> AppResult<Option<String>> {
+    Ok(service::load_diar_cache(&state.data_root, &id)?.map(|c| c.track))
 }
 
 /// Есть ли у встречи сохранённый анализ голосов (можно менять число голосов).
