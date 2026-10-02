@@ -98,6 +98,29 @@ pub fn accept_whisper(best: Candidate, whisper: Candidate) -> bool {
     whisper.words > best.words && whisper.confidence.map(|p| p >= 0.55).unwrap_or(false)
 }
 
+/// Насколько окно плохое (больше — хуже): пропущенная речь важнее всего,
+/// затем неуверенность и шум. Порядок второго прохода: сначала худшие окна —
+/// лимит работы Whisper уходит туда, где он нужнее.
+pub fn severity(w: &WindowStats) -> f32 {
+    let mut s = 1.0 - w.confidence.unwrap_or(0.0);
+    if w.speech_secs >= 1.0 && (w.tokens as f32 / w.speech_secs) < MIN_TOKENS_PER_SPEECH_SEC {
+        s += 1.0;
+    }
+    if w.snr_db.map(|x| x < MIN_SNR_DB).unwrap_or(false) {
+        s += 0.2;
+    }
+    s
+}
+
+/// Лимит Whisper на одну дорожку: не больше четверти окон (минимум 3) и не
+/// дольше половины длительности записи (минимум 60 с). Без лимита шумная
+/// длинная запись уходила в Whisper почти целиком — часы работы и перегрев.
+pub fn whisper_budget(windows: usize, audio_secs: f64) -> (usize, std::time::Duration) {
+    let calls = (windows.div_ceil(4)).max(3);
+    let secs = (audio_secs * 0.5).max(60.0);
+    (calls, std::time::Duration::from_secs_f64(secs))
+}
+
 /// Число слов в тексте реплик.
 pub fn word_count<'a>(texts: impl IntoIterator<Item = &'a str>) -> usize {
     texts.into_iter().map(|t| t.split_whitespace().filter(|w| w.chars().any(char::is_alphanumeric)).count()).sum()
@@ -149,6 +172,20 @@ mod tests {
         assert!(accept_whisper(empty, Candidate { words: 14, confidence: Some(0.71) }));
         assert!(!accept_whisper(empty, Candidate { words: 14, confidence: Some(0.3) }));
         assert!(!accept_whisper(Candidate { words: 15, confidence: Some(0.7) }, Candidate { words: 12, confidence: Some(0.9) }));
+    }
+
+    #[test]
+    fn worst_windows_first_and_bounded_whisper() {
+        let dropped = w(Some(8.0), 8.0, None, 0);
+        let unsure = w(Some(20.0), 8.0, Some(0.7), 30);
+        let noisy = w(Some(9.0), 8.0, Some(0.95), 30);
+        assert!(severity(&dropped) > severity(&unsure));
+        assert!(severity(&unsure) > severity(&noisy));
+        // 19 минут ≈ 80 окон: не больше 20 вызовов и ~9.5 минут.
+        let (calls, time) = whisper_budget(80, 19.0 * 60.0);
+        assert_eq!(calls, 20);
+        assert_eq!(time.as_secs(), 570);
+        assert_eq!(whisper_budget(2, 30.0), (3, std::time::Duration::from_secs(60)));
     }
 
     #[test]

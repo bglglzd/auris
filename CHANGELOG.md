@@ -3,6 +3,11 @@
 All notable changes to Memiro AI. Versions follow [Semantic Versioning](https://semver.org/);
 installers for every version are on [GitHub Releases](https://github.com/bglglzd/auris/releases).
 
+## [0.13.3] — 2026-10-02
+
+### Fixed
+- **Long noisy recordings no longer «hang» at 45 % and overheat the computer.** The second pass sent almost every window of a long noisy recording to Whisper — hours of full CPU/GPU load with a frozen progress bar. Now the worst windows go first, Whisper is limited per track (a quarter of the windows and about half of the recording's duration), the rest is refined by the fast engine on noise-reduced audio, and progress shows «Refining difficult parts N of M».
+
 ## [0.13.2] — 2026-10-02
 
 ### Added
