@@ -819,6 +819,17 @@ textarea::placeholder {
 }
 
 /* ---------- Player ---------- */
+/* Плеер всегда на экране: правишь реплики — можно слушать и ставить паузу. */
+.player-card {
+  position: sticky;
+  top: 8px;
+  z-index: 5;
+  box-shadow: var(--glass-shadow-soft), 0 8px 24px -14px rgba(0, 0, 0, 0.35);
+}
+/* Автопрокрутка к звучащей реплике не прячет её под плеером. */
+.transcript .turn {
+  scroll-margin-top: 120px;
+}
 .player {
   display: flex;
   align-items: center;
@@ -3765,6 +3776,9 @@ details.adv[open] summary::before {
 }
 :root[data-platform="macos"] .mv {
   padding-top: 0;
+}
+:root[data-platform="macos"] .player-card {
+  top: calc(var(--mac-titlebar) + 4px);
 }
 :root[data-platform="macos"] .content > .mac-drag {
   position: sticky;

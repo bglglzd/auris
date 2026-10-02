@@ -165,7 +165,8 @@ export function TranscriptView({
   }, [menuAt, anchor, following]);
 
   useEffect(() => {
-    if (editing) return;
+    // Во время правки (всей ленты или одной реплики) лента не уезжает.
+    if (editing || inlineAt !== null) return;
     const el = activeRef.current;
     if (!el) return;
     try {
@@ -173,7 +174,7 @@ export function TranscriptView({
     } catch {
       // jsdom / unsupported — ignore
     }
-  }, [activeIndex, editing]);
+  }, [activeIndex, editing, inlineAt]);
 
   // Порядок появления говорящих → стабильный цвет аватара.
   const speakerOrder = useMemo(

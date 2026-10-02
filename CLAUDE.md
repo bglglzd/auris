@@ -308,7 +308,9 @@ Ollama), `ai::pick_model` (настроенная → ближайшая по п
   «Распознать» (команда `recognize_range`: смесь дорожек → denoise+Parakeet →
   при пустом Whisper `transcribe_fast`), «Дописать». `refine::apply_window`
   не трогает реплики с изменённым текстом. Скорость плеера 1×/1,5×/2×
-  (localStorage `3uxo.playbackRate`, `defaultPlaybackRate` обеих дорожек).
+  (localStorage `3uxo.playbackRate`, `defaultPlaybackRate` обеих дорожек); плеер `.player-card` — sticky
+  (на Mac ниже `--mac-titlebar`), у `.turn` `scroll-margin-top`, автопрокрутка
+  ленты выключена во время правки реплики).
 
 ---
 

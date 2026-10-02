@@ -617,7 +617,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
         </div>
       )}
 
-      <div className="card">
+      <div className="card player-card">
         <div className="player">
           <button
             className="play-btn"

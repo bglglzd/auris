@@ -9,6 +9,7 @@ installers for every version are on [GitHub Releases](https://github.com/bglglzd
 - **Edit any phrase right in the transcript.** Hover a phrase → ✎ → fix the text in place (Ctrl/⌘+Enter saves, Esc cancels; an empty text removes the phrase). No need to switch the whole transcript into edit mode.
 - **Gaps are visible and fixable.** Where the recording has speech-length silence in the transcript (3 s or more), a «Gap a–b» line appears with «▶ Listen», «↻ Recognize» (re-recognizes just that part with noise reduction and, if needed, Whisper) and «＋ Add» (type a missed phrase yourself).
 - **Playback speed 1× / 1.5× / 2×** in the meeting player (remembered between meetings).
+- **The player stays on screen** while you scroll and edit the transcript — pause or rewind without scrolling back up. While you edit a phrase, playback no longer scrolls the transcript away from it.
 
 ### Fixed
 - Background refining never overwrites a phrase whose text you edited, even if its timing is unchanged.
