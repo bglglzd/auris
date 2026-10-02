@@ -7,7 +7,7 @@ import { getLabels, setLabels as saveLabels, nameForSpeaker } from "../labels";
 import type { SpeakerLabels } from "../labels";
 import { activeSegmentIndex } from "../playback";
 import { clock, transcriptToPlain } from "../export";
-import { mergeSpeakers, renumberSpeakers } from "../speakers";
+import { mergeSpeakers, newSpeakerId, reassignSegment, renumberSpeakers } from "../speakers";
 import { REPORTS_EVENT } from "../reports";
 import { applyPolicy } from "../profanity";
 import { profanityPolicy, SETTINGS_EVENT } from "../settings";
@@ -317,6 +317,17 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
         ? { segments: d.segments.map((s, j) => (j === i ? { ...s, speaker } : s)) }
         : d,
     );
+  // Быстрая смена говорящего в ленте (без режима правки) — сразу в файл.
+  const reassign = async (i: number, speaker: string | null, following: boolean) => {
+    if (!transcript) return;
+    const t = reassignSegment(transcript, i, speaker ?? newSpeakerId(transcript), following);
+    try {
+      await api.saveTranscript(meeting.id, t);
+      setTranscript(t);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
   const deleteSegment = (i: number) =>
     setDraft((d) => (d ? { segments: d.segments.filter((_, j) => j !== i) } : d));
   const saveEdit = async () => {
@@ -691,6 +702,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
             speakerOptions={speakers}
             onEditText={editText}
             onEditSpeaker={editSpeaker}
+            onReassign={isSolo ? undefined : reassign}
             onDeleteSegment={deleteSegment}
           />
           </>

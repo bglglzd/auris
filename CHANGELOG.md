@@ -3,6 +3,11 @@
 All notable changes to Memiro AI. Versions follow [Semantic Versioning](https://semver.org/);
 installers for every version are on [GitHub Releases](https://github.com/bglglzd/auris/releases).
 
+## [0.13.2] — 2026-10-02
+
+### Added
+- **Change the speaker of any phrase right in the transcript.** Click the name above a phrase → pick another voice, or «New voice» if the voice separation merged two people. Optionally apply to the following phrases of the same voice in a row. Saved immediately — no edit mode needed.
+
 ## [0.13.1] — 2026-10-02
 
 ### Fixed
