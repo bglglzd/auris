@@ -311,6 +311,19 @@ Ollama), `ai::pick_model` (настроенная → ближайшая по п
   (localStorage `3uxo.playbackRate`, `defaultPlaybackRate` обеих дорожек); плеер `.player-card` — sticky
   (на Mac ниже `--mac-titlebar`), у `.turn` `scroll-margin-top`, автопрокрутка
   ленты выключена во время правки реплики).
+  С v0.13.6 — реплики пользователя: `TranscriptSegment.origin` (`user` —
+  дописана, `edited` — исправлена; Rust `is_user()`). «＋» у каждой реплики
+  (`newSegmentAfter`) и «＋ Реплика» в плеере (`newSegmentAt`, пауза) →
+  пустой пузырь с выбором «Кто говорит». Повторная расшифровка —
+  `transcript::keep_user_segments` (свои реплики целы, распознанные поверх них
+  отбрасываются), `refine::apply_window` их не дублирует, `recluster` не
+  меняет говорящего дописанных. Обучение на правках — `src/learn.ts`
+  (`learnFromEdit`: только термины — латиница/цифры/имена с заглавной →
+  строки «было => стало» в `settings.whisper.learned`, идут в словарь вместе с
+  `vocabulary`; `vocab.rs` применяет правила `=>` к целым словам). Разбор
+  пропуска — `core/src/misses.rs` (`diagnose`: short/silent/overlap/quiet/
+  noisy/clear), команда `record_correction` → `<id>/corrections.jsonl` + строка
+  в лог (без текста), причина — под репликой.
 
 ---
 

@@ -726,6 +726,18 @@ pub async fn transcribe(
             }
         };
 
+        // Реплики, которые пользователь дописал или исправил, сохраняются —
+        // повторная расшифровка их не затирает.
+        let transcript = match service::load_transcript(&state.data_root, &id) {
+            Ok(Some(old)) => {
+                let kept = old.segments.iter().filter(|s| s.is_user()).count();
+                if kept > 0 {
+                    flog(&state.data_root, &format!("transcribe: kept {kept} user phrase(s)"));
+                }
+                uxo_core::transcript::keep_user_segments(&old, transcript)
+            }
+            _ => transcript,
+        };
         service::save_transcript(&state.data_root, &id, &transcript)?;
         {
             let plan = plan.finish();
@@ -1080,6 +1092,89 @@ fn refine_blocking(app: &AppHandle, data_root: &Path, id: &str) -> AppResult<u32
     Ok(improved)
 }
 
+/// Дорожки встречи (нормализованные, если есть): имя → отсчёты 16 кГц.
+fn meeting_tracks(data_root: &Path, id: &str) -> Vec<(&'static str, Vec<f32>)> {
+    let dir = service::meeting_dir(data_root, id);
+    let mut tracks = Vec::new();
+    for (name, files) in [("audio", ["audio.wav", ""]), ("mic", ["mic_norm.wav", "mic.wav"]), ("system", ["system_norm.wav", "system.wav"])] {
+        if let Some(path) = files.iter().filter(|n| !n.is_empty()).map(|n| dir.join(n)).find(|p| p.exists()) {
+            if let Ok(a) = uxo_core::enhance::read_wav_f32(&path) {
+                tracks.push((name, a));
+            }
+        }
+    }
+    tracks
+}
+
+/// Правка пользователя в расшифровке (для разбора ошибок распознавания).
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct Correction {
+    /// added — реплика дописана; edited — текст исправлен.
+    pub kind: String,
+    pub start: f64,
+    pub end: f64,
+    #[serde(default)]
+    pub before: String,
+    pub after: String,
+    #[serde(default)]
+    pub speaker: String,
+}
+
+/// Запоминает правку пользователя: для дописанной реплики разбирает звук
+/// места — почему распознавание её пропустило — и возвращает причину.
+/// Правка с причиной пишется в `<встреча>/corrections.jsonl` (остаётся на
+/// компьютере), в лог — только время, число слов и причина (без текста).
+#[tauri::command]
+pub async fn record_correction(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    correction: Correction,
+) -> AppResult<Option<uxo_core::misses::Diagnosis>> {
+    let data_root = state.data_root.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let diagnosis = (correction.kind == "added").then(|| {
+            let tracks = meeting_tracks(&data_root, &id);
+            let refs: Vec<(&str, &[f32])> = tracks.iter().map(|(n, a)| (*n, a.as_slice())).collect();
+            uxo_core::misses::diagnose(&refs, correction.start, correction.end)
+        });
+        let words = |t: &str| t.split_whitespace().count();
+        let mut line = format!(
+            "correction {} {:.1}–{:.1}s: words {}→{}",
+            correction.kind,
+            correction.start,
+            correction.end,
+            words(&correction.before),
+            words(&correction.after)
+        );
+        if let Some(d) = &diagnosis {
+            line.push_str(&format!(" · {}", d.code));
+            for t in &d.tracks {
+                line.push_str(&format!(
+                    " · {} {:.0}dB snr {} active {:.1}s",
+                    t.track,
+                    t.level_db,
+                    t.snr_db.map(|v| format!("{v:.0}")).unwrap_or_else(|| "-".into()),
+                    t.active_secs
+                ));
+            }
+        }
+        flog(&data_root, &line);
+        let record = serde_json::json!({
+            "at": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
+            "correction": correction,
+            "diagnosis": diagnosis,
+        });
+        let path = service::meeting_dir(&data_root, &id).join("corrections.jsonl");
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            use std::io::Write;
+            let _ = writeln!(f, "{record}");
+        }
+        Ok(diagnosis)
+    })
+    .await
+    .map_err(|e| AppError::Audio(format!("correction join: {e}")))?
+}
+
 /// Распознаёт заново промежуток записи (пропуск в расшифровке): дорожки
 /// встречи сводятся в одну, шумоподавление → Parakeet, а если он ничего не
 /// услышал — быстрый Whisper. Возвращает реплики со временем записи (без
@@ -1118,16 +1213,7 @@ fn recognize_range_blocking(
     language: Option<String>,
 ) -> AppResult<Vec<uxo_core::transcript::Segment>> {
     const SR: f64 = 16_000.0;
-    let dir = service::meeting_dir(data_root, id);
-    // Дорожки встречи (нормализованные, если есть).
-    let mut tracks: Vec<Vec<f32>> = Vec::new();
-    for names in [["audio.wav", ""], ["mic_norm.wav", "mic.wav"], ["system_norm.wav", "system.wav"]] {
-        if let Some(path) = names.iter().filter(|n| !n.is_empty()).map(|n| dir.join(n)).find(|p| p.exists()) {
-            if let Ok(a) = uxo_core::enhance::read_wav_f32(&path) {
-                tracks.push(a);
-            }
-        }
-    }
+    let tracks: Vec<Vec<f32>> = meeting_tracks(data_root, id).into_iter().map(|(_, a)| a).collect();
     if tracks.is_empty() {
         return Err(AppError::NotFound("звук встречи".into()));
     }

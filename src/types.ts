@@ -25,6 +25,15 @@ export interface TranscriptSegment {
   start_secs: number;
   end_secs: number;
   text: string;
+  /// Реплика пользователя: «user» — дописана, «edited» — текст исправлен.
+  /// Её не трогают ни фоновое уточнение, ни повторная расшифровка.
+  origin?: "user" | "edited";
+}
+
+/// Почему реплика не распозналась (разбор звука места, `core/src/misses.rs`).
+export interface MissDiagnosis {
+  code: "short" | "silent" | "overlap" | "quiet" | "noisy" | "clear";
+  text: string;
 }
 
 export interface Transcript {
@@ -50,6 +59,8 @@ export interface WhisperConfig {
   language: string;
   /// Словарь: термины, имена, команды — по строке или через запятую.
   vocabulary: string;
+  /// Выучено из правок пользователя: термины и замены «было => стало».
+  learned?: string;
 }
 
 /// Авто-запись звонков: следим за аудио-сессиями выбранных приложений и

@@ -11,9 +11,10 @@ import { clock, transcriptToPlain } from "../export";
 import { mergeSpeakers, newSpeakerId, reassignSegment, renumberSpeakers } from "../speakers";
 import { REPORTS_EVENT } from "../reports";
 import { applyPolicy } from "../profanity";
-import { findGaps, insertSegments, setSegmentText, speakerNear } from "../transcriptedit";
+import { findGaps, insertSegments, newSegmentAfter, newSegmentAt, setSegmentText, speakerNear } from "../transcriptedit";
+import { learnedLabel, learnFromEdit, mergeLearned } from "../learn";
 import type { Gap } from "../transcriptedit";
-import { getSettings, profanityPolicy, SETTINGS_EVENT } from "../settings";
+import { getSettings, profanityPolicy, saveSettings, SETTINGS_EVENT } from "../settings";
 import { TranscriptView } from "./TranscriptView";
 import { SpeakersPanel } from "./SpeakersPanel";
 import { ExportModal } from "./ExportModal";
@@ -383,7 +384,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
   const editText = (i: number, text: string) =>
     setDraft((d) =>
       d
-        ? { segments: d.segments.map((s, j) => (j === i ? { ...s, text } : s)) }
+        ? { segments: d.segments.map((s, j) => (j === i ? { ...s, text, origin: s.origin ?? "edited" } : s)) }
         : d,
     );
   const editSpeaker = (i: number, speaker: string) =>
@@ -402,8 +403,59 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
       setError(String(e));
     }
   };
-  const saveText = (i: number, text: string) => {
-    if (transcript) void persist(setSegmentText(transcript, i, text));
+  // Почему не распозналась дописанная реплика: начало реплики → причина.
+  const [why, setWhy] = useState<Record<string, string>>({});
+  // Открыть правку новой реплики (кнопка в плеере).
+  const [openRequest, setOpenRequest] = useState<{ index: number; nonce: number } | null>(null);
+  const saveText = (i: number, text: string, speaker?: string) => {
+    if (!transcript) return;
+    const before = transcript.segments[i];
+    const t = setSegmentText(transcript, i, text, speaker);
+    void persist(t);
+    if (!before || !text.trim() || before.text.trim() === text.trim()) return;
+    const added = before.origin === "user" && !before.text.trim();
+    // Учимся на правке: термины и замены «как распознано → как правильно»
+    // идут в словарь следующих расшифровок.
+    const learned = learnFromEdit(added ? "" : before.text, text);
+    if (learned.length) {
+      const s = getSettings();
+      saveSettings({ ...s, whisper: { ...s.whisper, learned: mergeLearned(s.whisper.learned ?? "", learned) } });
+    }
+    const learnedNote = learned.length ? `Запомнил для следующих расшифровок: ${learnedLabel(learned)}.` : "";
+    setNotice(learnedNote);
+    void api
+      .recordCorrection(meeting.id, {
+        kind: added ? "added" : "edited",
+        start: before.start_secs,
+        end: before.end_secs,
+        before: added ? "" : before.text,
+        after: text.trim(),
+        speaker: speaker ?? before.speaker,
+      })
+      .then((d) => {
+        if (d) setWhy((w) => ({ ...w, [before.start_secs.toFixed(2)]: d.text }));
+      })
+      .catch(() => {});
+  };
+  const whyMissed = (i: number) => {
+    const s = transcript?.segments[i];
+    return s ? why[s.start_secs.toFixed(2)] : undefined;
+  };
+  // Пустая реплика после реплики `i` — пользователь впишет пропущенное.
+  const addAfter = (i: number): number => {
+    if (!transcript || !transcript.segments[i]) return -1;
+    const { transcript: t, index } = insertSegments(transcript, [newSegmentAfter(transcript, i, duration)]);
+    setTranscript(t);
+    return index;
+  };
+  // «＋ Реплика» в плеере: пауза и новая реплика с текущего момента.
+  const addAtPlayhead = () => {
+    if (!transcript) return;
+    if (playing) togglePlay();
+    const at = micRef.current?.currentTime ?? time;
+    const { transcript: t, index } = insertSegments(transcript, [newSegmentAt(transcript, at, duration)]);
+    setTranscript(t);
+    setOpenRequest({ index, nonce: Date.now() });
   };
   const recognizeGap = async (g: Gap) => {
     if (!transcript) return;
@@ -428,7 +480,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
     if (!transcript) return -1;
     const start = g.start + 0.01;
     const { transcript: t, index } = insertSegments(transcript, [
-      { speaker: speakerNear(transcript, g), start_secs: start, end_secs: Math.min(g.end, start + 4), text: "" },
+      { speaker: speakerNear(transcript, g), start_secs: start, end_secs: Math.min(g.end, start + 4), text: "", origin: "user" },
     ]);
     setTranscript(t);
     return index;
@@ -665,6 +717,15 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
             ))}
           </div>
           <div className="track-tools">
+            {hasTranscript && !transcribing && !editing && (
+              <button
+                className="btn ghost small"
+                onClick={addAtPlayhead}
+                title="Слышите фразу, которой нет в расшифровке? Пауза и новая реплика с этого момента"
+              >
+                ＋ Реплика
+              </button>
+            )}
             <button
               className="btn ghost small"
               onClick={() => setEditorOpen(true)}
@@ -857,6 +918,9 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
             onPlayRange={playSample}
             onRecognizeGap={recognizeGap}
             onAddManual={addManual}
+            onAddAfter={addAfter}
+            openRequest={openRequest}
+            whyMissed={whyMissed}
             onDeleteSegment={deleteSegment}
           />
           </>

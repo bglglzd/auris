@@ -70,7 +70,7 @@ describe("TranscriptView inline edit and gaps", () => {
     const box = screen.getByPlaceholderText("Что было сказано…");
     await userEvent.clear(box);
     await userEvent.type(box, "Как ваши дела{Control>}{Enter}{/Control}");
-    expect(onSaveText).toHaveBeenCalledWith(1, "Как ваши дела");
+    expect(onSaveText).toHaveBeenCalledWith(1, "Как ваши дела", undefined);
     expect(onSeek).not.toHaveBeenCalled();
   });
 
@@ -100,5 +100,55 @@ describe("TranscriptView inline edit and gaps", () => {
     await userEvent.click(screen.getByText("＋ Дописать"));
     expect(onAddManual).toHaveBeenCalledWith(gap);
     expect(await screen.findByPlaceholderText("Что было сказано…")).toBeTruthy();
+  });
+
+  it("adds an empty bubble after a phrase and picks who speaks", async () => {
+    const onSaveText = vi.fn();
+    const withNew = {
+      segments: [
+        transcript.segments[0],
+        { speaker: "spk0", start_secs: 1, end_secs: 2, text: "", origin: "user" as const },
+        ...transcript.segments.slice(1),
+      ],
+    };
+    const onAddAfter = vi.fn(() => 1);
+    render(
+      <TranscriptView
+        transcript={withNew}
+        activeIndex={-1}
+        labels={{ spk1: "Анна" }}
+        onSeek={() => {}}
+        speakerOptions={["spk0", "spk1"]}
+        onSaveText={onSaveText}
+        onAddAfter={onAddAfter}
+      />,
+    );
+    await userEvent.click(screen.getAllByLabelText("Добавить реплику после этой")[0]);
+    expect(onAddAfter).toHaveBeenCalledWith(0);
+    expect(screen.getByRole("radiogroup", { name: "Кто говорит" })).toBeTruthy();
+    await userEvent.click(screen.getByRole("radio", { name: /Анна/ }));
+    await userEvent.type(screen.getByPlaceholderText("Впишите, что слышно в записи…"), "Я тоже за");
+    await userEvent.click(screen.getByText("Сохранить"));
+    expect(onSaveText).toHaveBeenCalledWith(1, "Я тоже за", "spk1");
+  });
+
+  it("marks user phrases and explains why one was missed", () => {
+    render(
+      <TranscriptView
+        transcript={{
+          segments: [
+            { speaker: "spk0", start_secs: 0, end_secs: 1, text: "Дописал", origin: "user" },
+            { speaker: "spk1", start_secs: 2, end_secs: 3, text: "Исправил", origin: "edited" },
+          ],
+        }}
+        activeIndex={-1}
+        labels={{}}
+        onSeek={() => {}}
+        whyMissed={(i) => (i === 0 ? "говорили одновременно" : undefined)}
+      />,
+    );
+    expect(screen.getByText("добавлено вами")).toBeTruthy();
+    expect(screen.getByText("исправлено")).toBeTruthy();
+    expect(screen.getByText("Почему не распозналось: говорили одновременно")).toBeTruthy();
   });
 });

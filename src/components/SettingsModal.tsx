@@ -444,6 +444,21 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
               </span>
             </div>
             <div className="field">
+              <label htmlFor="asr-learned">Выучено из ваших правок</label>
+              <textarea
+                id="asr-learned"
+                rows={3}
+                value={s.whisper.learned ?? ""}
+                onChange={(e) => wh("learned", e.target.value)}
+                placeholder={"Пока пусто. Исправьте реплику в расшифровке — например, «жира» на «Jira», —\nи Memiro запомнит: жира => Jira"}
+              />
+              <span className="hint">
+                Когда вы исправляете или дописываете реплику, Memiro запоминает термины и имена (строка
+                «как распознано =&gt; как правильно») и учитывает их в следующих расшифровках. Обычные слова
+                не запоминаются — их правка касается только своей встречи. Лишнее можно удалить.
+              </span>
+            </div>
+            <div className="field">
               <label htmlFor="asr-profanity">Нецензурная лексика</label>
               <select
                 id="asr-profanity"
