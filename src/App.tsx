@@ -216,6 +216,9 @@ export default function App() {
           [id]: { running: false, percent: 100, doneToken: (t[id]?.doneToken ?? 0) + 1 },
         }));
         await refresh();
+        // Трудные места (шум, перебивания) уточняются в фоне — расшифровка
+        // уже готова и доступна.
+        void api.refineTranscript(id).catch(() => {});
         // ИИ сам придумывает заголовок и подводит итоги (если подключён).
         const m = await api.getMeeting(id).catch(() => null);
         if (m) {

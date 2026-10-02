@@ -166,7 +166,13 @@ e2e-тест `core/tests/diarize_e2e.rs` (`-- --ignored`, в CI на Windows).
 Фронт — `AudioEditor`/`WaveLane` + чистая логика `audioedit.ts`.
 
 ### Качество распознавания (v0.13)
-`QualityGuard` (commands.rs, Parakeet + Whisper): (1) **второй проход** —
+**С v0.13.4 всё уточнение — в фоне**: `QualityGuard` делает только первый проход
+и копит план (`refine.rs` → `<id>/refine.json`: окна Hard/Lang + исходные реплики);
+после расшифровки фронт зовёт `refine_transcript` (по месту: denoise+Parakeet →
+`WhisperTranscriber::transcribe_fast`, жадно, ½ ядер, паузы; `refine::apply_window`
+меняет только реплики, совпадающие по времени с исходными — правки целы),
+события `refine-progress`, `cancel_refine`, `refine_pending` (остаток/идёт).
+Ниже — критерии окон (`QualityGuard`, Parakeet + Whisper): (1) **второй проход** —
 окна Parakeet с низкой уверенностью (`parakeet::WindowScore`, softmax токена),
 SNR < 12 дБ (`enhance::snr_db`) или «речь есть, слов нет» (перебивания —
 Parakeet молчит; сильный ровный шум — всегда) → Parakeet по `enhance::denoise`

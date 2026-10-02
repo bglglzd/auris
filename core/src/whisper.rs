@@ -29,6 +29,12 @@ pub struct WhisperTranscriber {
     prompt: Option<String>,
 }
 
+/// Режим быстрой расшифровки (уточнение трудных мест).
+struct FastMode {
+    force: Option<String>,
+    prefer: Option<String>,
+}
+
 /// Выбор языка окна по вероятностям Whisper: приоритетный — если он не
 /// исключён явно; другой — только когда модель в нём уверена (≥ 0.7), а у
 /// приоритетного шансов почти нет (< 0.1).
@@ -148,13 +154,27 @@ impl WhisperTranscriber {
         on_progress: &dyn Fn(usize, usize),
     ) -> AppResult<Vec<Segment>> {
         let audio = Self::read_wav_as_f32(wav_path)?;
-        Ok(self.transcribe_audio(&audio, window_secs, on_progress)?.0)
+        Ok(self.transcribe_audio(&audio, window_secs, on_progress, None)?.0)
     }
 
     /// Расшифровка отрывка (16 кГц моно f32) с оценкой: средняя вероятность
     /// токенов текста (`None` — текста нет).
     pub fn transcribe_samples(&self, samples: &[f32]) -> AppResult<(Vec<Segment>, Option<f32>)> {
-        self.transcribe_audio(samples, DEFAULT_WINDOW_SECS, &|_, _| {})
+        self.transcribe_audio(samples, DEFAULT_WINDOW_SECS, &|_, _| {}, None)
+    }
+
+    /// Быстрая расшифровка отрывка для уточнения трудных мест: жадное
+    /// декодирование (в разы быстрее beam search) и без лишнего прохода
+    /// определения языка, если язык известен (`force`). `prefer` — язык
+    /// определяется по звуку с этим приоритетом (для реплик «не того языка»).
+    pub fn transcribe_fast(
+        &self,
+        samples: &[f32],
+        force: Option<&str>,
+        prefer: Option<&str>,
+    ) -> AppResult<(Vec<Segment>, Option<f32>)> {
+        let fast = FastMode { force: force.map(str::to_string), prefer: prefer.map(str::to_string) };
+        self.transcribe_audio(samples, DEFAULT_WINDOW_SECS, &|_, _| {}, Some(&fast))
     }
 
     fn transcribe_audio(
@@ -162,6 +182,7 @@ impl WhisperTranscriber {
         audio: &[f32],
         window_secs: usize,
         on_progress: &dyn Fn(usize, usize),
+        fast: Option<&FastMode>,
     ) -> AppResult<(Vec<Segment>, Option<f32>)> {
         let (mut prob_sum, mut prob_n) = (0.0f32, 0usize);
         if audio.is_empty() {
@@ -189,15 +210,22 @@ impl WhisperTranscriber {
 
             // Beam search заметно точнее жадного декодирования (меньше пропусков
             // и искажённых слов); у turbo-моделей декодер лёгкий, цена небольшая.
-            let mut params = FullParams::new(SamplingStrategy::BeamSearch {
-                beam_size: 5,
-                patience: -1.0,
-            });
-            params.set_n_threads(n_threads);
+            let mut params = if fast.is_some() {
+                FullParams::new(SamplingStrategy::Greedy { best_of: 1 })
+            } else {
+                FullParams::new(SamplingStrategy::BeamSearch { beam_size: 5, patience: -1.0 })
+            };
+            // Фоновое уточнение — не больше половины ядер: компьютер остаётся
+            // отзывчивым и не перегревается.
+            params.set_n_threads(if fast.is_some() { (n_threads / 2).max(2) } else { n_threads });
             let mut window_lang: Option<String> = None;
-            match self.language.as_deref() {
+            let (language, prefer) = match fast {
+                Some(f) => (f.force.as_deref().or(Some("auto")), f.prefer.as_deref()),
+                None => (self.language.as_deref(), self.prefer.as_deref()),
+            };
+            match language {
                 Some("auto") | None => {
-                    if let Some(prefer) = self.prefer.as_deref() {
+                    if let Some(prefer) = prefer {
                         window_lang = Some(self.detect_preferring(&mut state, chunk, prefer, n_threads as usize));
                     }
                 }
