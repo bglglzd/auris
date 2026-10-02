@@ -171,7 +171,10 @@ e2e-тест `core/tests/diarize_e2e.rs` (`-- --ignored`, в CI на Windows).
 SNR < 12 дБ (`enhance::snr_db`) или «речь есть, слов нет» (перебивания —
 Parakeet молчит; сильный ровный шум — всегда) → Parakeet по `enhance::denoise`
 (`declick` от треска + спектральный гейт) →
-при неудаче Whisper; выбор — `rescue.rs` по уверенности. Замеры —
+при неудаче Whisper; выбор — `rescue.rs` по уверенности. С v0.13.3 — окна от
+худших (`rescue::severity`), лимит Whisper на дорожку (`whisper_budget`: ¼ окон,
+≤ ½ длительности; общий с контролем языка), прогресс — стадия `refine`
+(`Asr::run_staged`). Замеры —
 `--example noise_eval`. (2) **контроль языка** — `langguard.rs`: реплики не той
 письменности → Whisper с `with_preferred_language` (`pick_language`: приоритет
 языка из настроек, другой — только при уверенности ≥ 0.7). (3) **словарь** —

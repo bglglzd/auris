@@ -190,6 +190,8 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
           ? "Подготовка модели"
           : stage === "diarize"
             ? "Разделение голосов"
+            : stage === "refine"
+              ? "Уточнение трудных мест"
             : stage === "system"
               ? "Расшифровка собеседника"
               : isImported

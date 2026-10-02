@@ -587,9 +587,10 @@ pub async fn transcribe(
             let text_scale = 100.0f32;
 
             emit("mic", 0.0, 0, 0);
-            let segs = transcriber.run(
+            let segs = transcriber.run_staged(
                 &audio_path,
-                &|done, total| emit("mic", (done as f32 / total as f32) * text_scale, done, total),
+                &|done, total| emit("mic", (done as f32 / total as f32) * text_scale * 0.8, done, total),
+                &|done, total| emit("refine", text_scale * (0.8 + 0.2 * done as f32 / total.max(1) as f32), done, total),
             )?;
             flog(&state.data_root, &format!("transcribed: audio={} segs", segs.len()));
 
@@ -622,9 +623,10 @@ pub async fn transcribe(
             let mic_path = normalize_track(&state.data_root, &id, "mic.wav")?;
             emit("mic", 0.0, 0, 0);
             flog(&state.data_root, "transcribe: solo mic track");
-            let mic_segs = transcriber.run(
+            let mic_segs = transcriber.run_staged(
                 &mic_path,
-                &|done, total| emit("mic", (done as f32 / total as f32) * 100.0, done, total),
+                &|done, total| emit("mic", (done as f32 / total as f32) * 80.0, done, total),
+                &|done, total| emit("refine", 80.0 + 20.0 * done as f32 / total.max(1) as f32, done, total),
             )?;
             flog(
                 &state.data_root,
@@ -648,17 +650,20 @@ pub async fn transcribe(
 
             emit("mic", 0.0, 0, 0);
             flog(&state.data_root, "transcribe: mic track");
-            let mic_segs = transcriber.run(
+            let mic_segs = transcriber.run_staged(
                 &mic_path,
-                &|done, total| emit("mic", (done as f32 / total as f32) * 45.0, done, total),
+                &|done, total| emit("mic", (done as f32 / total as f32) * 36.0, done, total),
+                &|done, total| emit("refine", 36.0 + 9.0 * done as f32 / total.max(1) as f32, done, total),
             )?;
 
             emit("system", 45.0, 0, 0);
             flog(&state.data_root, "transcribe: system track");
-            let system_segs = transcriber.run(
+            let sys_span = sys_end - 45.0;
+            let system_segs = transcriber.run_staged(
                 &system_path,
+                &|done, total| emit("system", 45.0 + (done as f32 / total as f32) * sys_span * 0.8, done, total),
                 &|done, total| {
-                    emit("system", 45.0 + (done as f32 / total as f32) * (sys_end - 45.0), done, total)
+                    emit("refine", 45.0 + sys_span * (0.8 + 0.2 * done as f32 / total.max(1) as f32), done, total)
                 },
             )?;
 
@@ -744,6 +749,18 @@ trait Asr {
         wav: &Path,
         progress: &dyn Fn(usize, usize),
     ) -> AppResult<Vec<uxo_core::transcript::Segment>>;
+
+    /// То же, плюс прогресс второго прохода (уточнение трудных мест):
+    /// `refine(готово, всего)`.
+    fn run_staged(
+        &self,
+        wav: &Path,
+        progress: &dyn Fn(usize, usize),
+        refine: &dyn Fn(usize, usize),
+    ) -> AppResult<Vec<uxo_core::transcript::Segment>> {
+        let _ = refine;
+        self.run(wav, progress)
+    }
 }
 
 #[cfg(feature = "whisper")]
@@ -784,10 +801,22 @@ struct QualityGuard {
     prompt: Option<String>,
     data_root: PathBuf,
     whisper: std::cell::OnceCell<Option<uxo_core::whisper::WhisperTranscriber>>,
+    /// Лимит Whisper на текущую дорожку: (вызовов осталось, крайний срок).
+    budget: std::cell::Cell<(usize, std::time::Instant)>,
 }
 
 #[cfg(all(feature = "parakeet", feature = "whisper"))]
 impl QualityGuard {
+    /// Можно ли ещё звать Whisper на этой дорожке (и списать вызов).
+    fn take_whisper(&self) -> bool {
+        let (left, deadline) = self.budget.get();
+        if left == 0 || std::time::Instant::now() > deadline {
+            return false;
+        }
+        self.budget.set((left - 1, deadline));
+        true
+    }
+
     fn lang(&self) -> Option<&str> {
         self.language.as_deref().map(str::trim).filter(|l| !l.is_empty())
     }
@@ -812,6 +841,7 @@ impl QualityGuard {
         audio: &[f32],
         segs: Vec<uxo_core::transcript::Segment>,
         scores: &[uxo_core::parakeet::WindowScore],
+        refine: &dyn Fn(usize, usize),
     ) -> Vec<uxo_core::transcript::Segment> {
         use uxo_core::rescue::{self as rs, Candidate};
         use uxo_core::transcript::Segment;
@@ -825,64 +855,78 @@ impl QualityGuard {
                 })
                 .collect()
         };
+        // Трудные окна — от худших к лучшим (лимит Whisper — худшим).
+        let mut hard: Vec<(rs::WindowStats, usize, usize)> = scores
+            .iter()
+            .filter_map(|w| {
+                let (ia, ib) = ((w.start_secs * SR) as usize, ((w.end_secs * SR) as usize).min(audio.len()));
+                if ib <= ia {
+                    return None;
+                }
+                let window = &audio[ia..ib];
+                let stats = rs::WindowStats {
+                    start_secs: w.start_secs,
+                    end_secs: w.end_secs,
+                    snr_db: uxo_core::enhance::snr_db(window),
+                    speech_secs: rs::speech_secs(window),
+                    confidence: w.confidence,
+                    tokens: w.tokens,
+                };
+                rs::is_hard(&stats).then_some((stats, ia, ib))
+            })
+            .collect();
+        hard.sort_by(|a, b| rs::severity(&b.0).partial_cmp(&rs::severity(&a.0)).unwrap_or(std::cmp::Ordering::Equal));
+        let total = hard.len();
         let (mut spans, mut fixed) = (Vec::new(), Vec::new());
-        let (mut hard, mut by_denoise, mut by_whisper) = (0usize, 0usize, 0usize);
-        for w in scores {
-            let (ia, ib) = ((w.start_secs * SR) as usize, ((w.end_secs * SR) as usize).min(audio.len()));
-            if ib <= ia {
-                continue;
-            }
-            let window = &audio[ia..ib];
-            let stats = rs::WindowStats {
-                start_secs: w.start_secs,
-                end_secs: w.end_secs,
-                snr_db: uxo_core::enhance::snr_db(window),
-                speech_secs: rs::speech_secs(window),
-                confidence: w.confidence,
-                tokens: w.tokens,
-            };
-            if !rs::is_hard(&stats) {
-                continue;
-            }
-            hard += 1;
+        let (mut by_denoise, mut by_whisper, mut skipped) = (0usize, 0usize, 0usize);
+        for (k, (stats, ia, ib)) in hard.iter().enumerate() {
+            refine(k, total);
+            let window = &audio[*ia..*ib];
             let mid = |s: &Segment| (s.start_secs + s.end_secs) / 2.0;
-            let orig_words =
-                rs::word_count(segs.iter().filter(|s| mid(s) >= w.start_secs && mid(s) < w.end_secs).map(|s| s.text.as_str()));
-            let orig = Candidate { words: orig_words, confidence: w.confidence };
+            let orig_words = rs::word_count(
+                segs.iter().filter(|s| mid(s) >= stats.start_secs && mid(s) < stats.end_secs).map(|s| s.text.as_str()),
+            );
+            let orig = Candidate { words: orig_words, confidence: stats.confidence };
             let clean = uxo_core::enhance::denoise(window);
             let mut best = orig;
-            let mut chosen: Option<Vec<Segment>> = None;
+            let mut chosen: Option<(Vec<Segment>, bool)> = None;
             if let Ok((alt, conf)) = self.primary.transcribe_samples(&clean) {
                 let cand = Candidate { words: rs::word_count(alt.iter().map(|s| s.text.as_str())), confidence: conf };
                 if rs::better_same_engine(orig, cand) {
                     best = cand;
-                    chosen = Some(alt);
-                    by_denoise += 1;
+                    chosen = Some((alt, false));
                 }
             }
             if rs::still_hard(best, rs::speech_secs(&clean).max(stats.speech_secs)) {
-                if let Some(wh) = self.whisper() {
+                if !self.take_whisper() {
+                    skipped += 1;
+                } else if let Some(wh) = self.whisper() {
                     if let Ok((alt, prob)) = wh.transcribe_samples(&clean) {
                         let cand = Candidate { words: rs::word_count(alt.iter().map(|s| s.text.as_str())), confidence: prob };
                         if rs::accept_whisper(best, cand) {
-                            if chosen.is_some() {
-                                by_denoise -= 1;
-                            }
-                            chosen = Some(alt);
-                            by_whisper += 1;
+                            chosen = Some((alt, true));
                         }
                     }
                 }
             }
-            if let Some(alt) = chosen {
-                spans.push((w.start_secs, w.end_secs));
-                fixed.extend(shift(alt, w.start_secs, w.end_secs));
+            if let Some((alt, whisper)) = chosen {
+                if whisper {
+                    by_whisper += 1;
+                } else {
+                    by_denoise += 1;
+                }
+                spans.push((stats.start_secs, stats.end_secs));
+                fixed.extend(shift(alt, stats.start_secs, stats.end_secs));
             }
         }
-        if hard > 0 {
+        refine(total, total);
+        if total > 0 {
             flog(
                 &self.data_root,
-                &format!("second pass: {hard} hard window(s), improved {} (denoise {by_denoise}, whisper {by_whisper})", spans.len()),
+                &format!(
+                    "second pass: {total} hard window(s), improved {} (denoise {by_denoise}, whisper {by_whisper}), whisper limit skipped {skipped}",
+                    spans.len()
+                ),
             );
         }
         if spans.is_empty() {
@@ -911,6 +955,10 @@ impl QualityGuard {
         let Some(whisper) = self.whisper() else { return Ok(segs) };
         let mut fixed = Vec::new();
         for (i, &(a, b)) in spans.iter().enumerate() {
+            if !self.take_whisper() {
+                flog(&self.data_root, &format!("language guard: whisper limit, {} span(s) left as is", spans.len() - i));
+                break;
+            }
             let part = wav.with_extension(format!("span{i}.wav"));
             lg::cut_wav(wav, &part, a, b)?;
             let redo = whisper.run(&part, &|_, _| {});
@@ -939,9 +987,20 @@ impl Asr for QualityGuard {
         wav: &Path,
         progress: &dyn Fn(usize, usize),
     ) -> AppResult<Vec<uxo_core::transcript::Segment>> {
+        self.run_staged(wav, progress, &|_, _| {})
+    }
+
+    fn run_staged(
+        &self,
+        wav: &Path,
+        progress: &dyn Fn(usize, usize),
+        refine: &dyn Fn(usize, usize),
+    ) -> AppResult<Vec<uxo_core::transcript::Segment>> {
         let (segs, scores) = self.primary.transcribe_scored(wav, progress)?;
         let audio = uxo_core::enhance::read_wav_f32(wav)?;
-        let segs = self.rescue(&audio, segs, &scores);
+        let (calls, time) = uxo_core::rescue::whisper_budget(scores.len(), audio.len() as f64 / 16_000.0);
+        self.budget.set((calls, std::time::Instant::now() + time));
+        let segs = self.rescue(&audio, segs, &scores, refine);
         self.language_fix(wav, segs)
     }
 }
@@ -973,7 +1032,16 @@ impl Asr for VocabFix {
         wav: &Path,
         progress: &dyn Fn(usize, usize),
     ) -> AppResult<Vec<uxo_core::transcript::Segment>> {
-        let mut segs = self.inner.run(wav, progress)?;
+        self.run_staged(wav, progress, &|_, _| {})
+    }
+
+    fn run_staged(
+        &self,
+        wav: &Path,
+        progress: &dyn Fn(usize, usize),
+        refine: &dyn Fn(usize, usize),
+    ) -> AppResult<Vec<uxo_core::transcript::Segment>> {
+        let mut segs = self.inner.run_staged(wav, progress, refine)?;
         for s in &mut segs {
             s.text = self.vocab.correct(&s.text);
         }
@@ -1001,6 +1069,7 @@ fn load_engine(
                 prompt: vocab.prompt(),
                 data_root: data_root.to_path_buf(),
                 whisper: std::cell::OnceCell::new(),
+                budget: std::cell::Cell::new((0, std::time::Instant::now())),
             }));
             #[cfg(not(feature = "whisper"))]
             {
