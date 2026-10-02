@@ -97,3 +97,7 @@ required-features = ["parakeet"]
 [[example]]
 name = "noise_eval"
 required-features = ["parakeet"]
+
+[[example]]
+name = "diar_noise_eval"
+required-features = ["diarize"]

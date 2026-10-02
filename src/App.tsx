@@ -207,10 +207,10 @@ export default function App() {
   }, []);
 
   const startTranscription = useCallback(
-    async (id: string, speakerCount: number | null, soloFlag: boolean) => {
+    async (id: string, speakerCount: number | null, soloFlag: boolean, totalVoices = false) => {
       setTrans((t) => ({ ...t, [id]: { running: true, percent: 0 } }));
       try {
-        await api.transcribe(id, getSettings().whisper, speakerCount, soloFlag);
+        await api.transcribe(id, getSettings().whisper, speakerCount, soloFlag, totalVoices);
         setTrans((t) => ({
           ...t,
           [id]: { running: false, percent: 100, doneToken: (t[id]?.doneToken ?? 0) + 1 },
@@ -337,8 +337,8 @@ export default function App() {
             key={selected.id}
             meeting={selected}
             transState={trans[selected.id]}
-            onTranscribe={(speakerCount, soloFlag) =>
-              startTranscription(selected.id, speakerCount, soloFlag)
+            onTranscribe={(speakerCount, soloFlag, totalVoices) =>
+              startTranscription(selected.id, speakerCount, soloFlag, totalVoices)
             }
             onMetaSaved={refresh}
           />

@@ -767,13 +767,15 @@ pub fn recluster_transcript(
         AppError::InvalidState("нет расшифровки — сначала расшифруйте встречу".into())
     })?;
     let diar = crate::cluster::diarize_windows(&cache.windows, num_speakers);
-    let recorded = cache.track == "system.wav";
-    let relabeled = crate::transcript::relabel_speakers(
-        &transcript,
-        &diar,
-        |s| !recorded || s.speaker != crate::transcript::ME,
-        recorded.then_some(crate::transcript::THEM),
-    );
+    use crate::transcript::{ME, THEM};
+    let relabeled = match cache.track.as_str() {
+        // Звонок: голоса собеседников, «Я» не трогаем.
+        "system.wav" => crate::transcript::relabel_speakers(&transcript, &diar, |s| s.speaker != ME, Some(THEM)),
+        // Живая встреча: голоса в микрофоне (реплики из звонка не трогаем);
+        // один голос — «Я».
+        "mic.wav" => crate::transcript::relabel_speakers(&transcript, &diar, |s| s.speaker != THEM, Some(ME)),
+        _ => crate::transcript::relabel_speakers(&transcript, &diar, |_| true, None),
+    };
     save_transcript(data_root, id, &relabeled)?;
     Ok(relabeled)
 }

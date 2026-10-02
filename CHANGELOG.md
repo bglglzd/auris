@@ -3,6 +3,13 @@
 All notable changes to Memiro AI. Versions follow [Semantic Versioning](https://semver.org/);
 installers for every version are on [GitHub Releases](https://github.com/bglglzd/auris/releases).
 
+## [0.13.1] — 2026-10-02
+
+### Fixed
+- **In-person meetings recorded with the microphone are split by voice.** When the call track is (almost) silent and all voices are in the microphone, Memiro now separates the voices in the microphone track — before, everything was attributed to «Me» and choosing the number of voices had no effect. The voice count of such a meeting means all people in the room. Re-transcribe an existing meeting to apply.
+- **Heavy steady noise:** the second pass did not start when speech barely rose above a loud steady background (the window looked «silent»); such windows are now always re-recognised.
+- **Crackle and clicks** are removed before noise reduction in the second pass.
+
 ## [0.13.0] — 2026-10-02
 
 ### Added
