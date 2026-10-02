@@ -579,7 +579,7 @@ pub async fn transcribe(
         )?;
 
         // Трудные места — планом в refine.json; уточняет фоновая команда.
-        let mut plan = PlanBuilder::new(options.language.clone(), options.vocabulary.clone());
+        let mut plan = PlanBuilder::new(options.language.clone(), options.vocabulary.clone(), vocab.clone());
         let transcript = if imported {
             // Импорт — одна дорожка audio.wav: текст 0..75%, голоса 75..100%.
             let audio_path = service::track_path(&state.data_root, &id, "audio.wav")?;
@@ -1080,19 +1080,125 @@ fn refine_blocking(app: &AppHandle, data_root: &Path, id: &str) -> AppResult<u32
     Ok(improved)
 }
 
+/// Распознаёт заново промежуток записи (пропуск в расшифровке): дорожки
+/// встречи сводятся в одну, шумоподавление → Parakeet, а если он ничего не
+/// услышал — быстрый Whisper. Возвращает реплики со временем записи (без
+/// говорящих — их назначает интерфейс).
+#[tauri::command]
+pub async fn recognize_range(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    start: f64,
+    end: f64,
+    language: Option<String>,
+) -> AppResult<Vec<uxo_core::transcript::Segment>> {
+    let data_root = state.data_root.clone();
+    tauri::async_runtime::spawn_blocking(move || recognize_range_blocking(&data_root, &id, start, end, language))
+        .await
+        .map_err(|e| AppError::Audio(format!("recognize join: {e}")))?
+}
+
+#[cfg(not(feature = "parakeet"))]
+fn recognize_range_blocking(
+    _data_root: &Path,
+    _id: &str,
+    _start: f64,
+    _end: f64,
+    _language: Option<String>,
+) -> AppResult<Vec<uxo_core::transcript::Segment>> {
+    Err(AppError::InvalidState("распознавание недоступно в этой сборке".into()))
+}
+
+#[cfg(feature = "parakeet")]
+fn recognize_range_blocking(
+    data_root: &Path,
+    id: &str,
+    start: f64,
+    end: f64,
+    language: Option<String>,
+) -> AppResult<Vec<uxo_core::transcript::Segment>> {
+    const SR: f64 = 16_000.0;
+    let dir = service::meeting_dir(data_root, id);
+    // Дорожки встречи (нормализованные, если есть).
+    let mut tracks: Vec<Vec<f32>> = Vec::new();
+    for names in [["audio.wav", ""], ["mic_norm.wav", "mic.wav"], ["system_norm.wav", "system.wav"]] {
+        if let Some(path) = names.iter().filter(|n| !n.is_empty()).map(|n| dir.join(n)).find(|p| p.exists()) {
+            if let Ok(a) = uxo_core::enhance::read_wav_f32(&path) {
+                tracks.push(a);
+            }
+        }
+    }
+    if tracks.is_empty() {
+        return Err(AppError::NotFound("звук встречи".into()));
+    }
+    let (a, b) = ((start - 0.3).max(0.0), end + 0.3);
+    let (ia, ib) = ((a * SR) as usize, (b * SR) as usize);
+    let len = ib.saturating_sub(ia);
+    let mut mix = vec![0f32; len];
+    for t in &tracks {
+        for (k, m) in mix.iter_mut().enumerate() {
+            if let Some(v) = t.get(ia + k) {
+                *m += v;
+            }
+        }
+    }
+    let peak = mix.iter().fold(0f32, |p, v| p.max(v.abs()));
+    if peak > 1.0 {
+        for m in &mut mix {
+            *m /= peak;
+        }
+    }
+    if mix.len() < (SR * 0.3) as usize {
+        return Ok(Vec::new());
+    }
+    let clean = uxo_core::enhance::denoise(&mix);
+    let parakeet = uxo_core::parakeet::ParakeetTranscriber::managed(data_root, &|_| {})?;
+    #[cfg_attr(not(feature = "whisper"), allow(unused_mut))]
+    let (mut segs, _) = parakeet.transcribe_samples(&clean)?;
+    let words = |v: &[uxo_core::transcript::Segment]| uxo_core::rescue::word_count(v.iter().map(|s| s.text.as_str()));
+    #[cfg(feature = "whisper")]
+    if words(&segs) == 0 {
+        let lang = language.as_deref().map(str::trim).filter(|l| !l.is_empty() && *l != "auto");
+        if let Ok(w) = uxo_core::whisper::WhisperTranscriber::managed(data_root, None, Some("auto".into()), &|_| {}) {
+            if let Ok((alt, _)) = w.transcribe_fast(&clean, lang, None) {
+                segs = alt;
+            }
+        }
+    }
+    #[cfg(not(feature = "whisper"))]
+    let _ = language;
+    flog(data_root, &format!("recognize range {start:.1}–{end:.1}s: {} words", words(&segs)));
+    Ok(segs
+        .into_iter()
+        .filter(|s| !s.text.trim().is_empty())
+        .map(|mut s| {
+            s.start_secs = (s.start_secs + a).clamp(start, end);
+            s.end_secs = (s.end_secs + a).clamp(s.start_secs, end);
+            s
+        })
+        .collect())
+}
+
 /// Собирает план фонового уточнения по дорожкам.
 #[cfg_attr(not(any(feature = "whisper", feature = "parakeet")), allow(dead_code))]
-struct PlanBuilder(uxo_core::refine::RefinePlan);
+struct PlanBuilder(uxo_core::refine::RefinePlan, uxo_core::vocab::Vocabulary);
 
 #[cfg_attr(not(any(feature = "whisper", feature = "parakeet")), allow(dead_code))]
 impl PlanBuilder {
-    fn new(language: Option<String>, vocabulary: Option<String>) -> Self {
-        Self(uxo_core::refine::RefinePlan { jobs: Vec::new(), language, vocabulary })
+    fn new(language: Option<String>, vocabulary: Option<String>, vocab: uxo_core::vocab::Vocabulary) -> Self {
+        Self(uxo_core::refine::RefinePlan { jobs: Vec::new(), language, vocabulary }, vocab)
     }
 
-    fn add(&mut self, wav: &Path, windows: Vec<uxo_core::refine::RefineWindow>) {
+    fn add(&mut self, wav: &Path, mut windows: Vec<uxo_core::refine::RefineWindow>) {
         if windows.is_empty() {
             return;
+        }
+        // Исходные реплики — в том виде, в каком они попали в расшифровку
+        // (после словаря), чтобы уточнение узнало их и не тронуло правленые.
+        for w in &mut windows {
+            for o in &mut w.originals {
+                o.text = self.1.correct(&o.text);
+            }
         }
         let name = wav.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
         self.0.jobs.push(uxo_core::refine::RefineJob { wav: name, windows });

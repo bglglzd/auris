@@ -149,6 +149,14 @@ export const api = {
   refineTranscript: (id: string): Promise<number> => inv("refine_transcript", { id }),
   refineStatus: (id: string): Promise<{ pending: number; running: boolean }> => inv("refine_pending", { id }),
   cancelRefine: (id: string): Promise<void> => inv("cancel_refine", { id }),
+  /// Распознать заново промежуток записи (пропуск в расшифровке).
+  recognizeRange: (
+    id: string,
+    start: number,
+    end: number,
+    language?: string,
+  ): Promise<{ start_secs: number; end_secs: number; text: string }[]> =>
+    inv("recognize_range", { id, start, end, language: language || null }),
   /// Какая дорожка разделена по голосам: system.wav / mic.wav (живая встреча) / audio.wav.
   voiceAnalysisTrack: (id: string): Promise<string | null> =>
     inv("voice_analysis_track", { id }),

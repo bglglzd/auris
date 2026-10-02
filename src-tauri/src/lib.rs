@@ -469,6 +469,7 @@ pub fn run() {
             commands::refine_transcript,
             commands::refine_pending,
             commands::cancel_refine,
+            commands::recognize_range,
             commands::models_status,
             commands::download_model,
             commands::delete_model,

@@ -11,7 +11,9 @@ import { clock, transcriptToPlain } from "../export";
 import { mergeSpeakers, newSpeakerId, reassignSegment, renumberSpeakers } from "../speakers";
 import { REPORTS_EVENT } from "../reports";
 import { applyPolicy } from "../profanity";
-import { profanityPolicy, SETTINGS_EVENT } from "../settings";
+import { findGaps, insertSegments, setSegmentText, speakerNear } from "../transcriptedit";
+import type { Gap } from "../transcriptedit";
+import { getSettings, profanityPolicy, SETTINGS_EVENT } from "../settings";
 import { TranscriptView } from "./TranscriptView";
 import { SpeakersPanel } from "./SpeakersPanel";
 import { ExportModal } from "./ExportModal";
@@ -36,6 +38,18 @@ function plural(n: number, one: string, few: string, many: string): string {
   if (mod10 === 1 && mod100 !== 11) return one;
   if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return few;
   return many;
+}
+
+const RATE_KEY = "3uxo.playbackRate";
+const RATES = [1, 1.5, 2];
+const rateLabel = (r: number) => `${String(r).replace(".", ",")}×`;
+function loadRate(): number {
+  try {
+    const v = Number(localStorage.getItem(RATE_KEY));
+    return RATES.includes(v) ? v : 1;
+  } catch {
+    return 1;
+  }
 }
 
 export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: Props) {
@@ -73,6 +87,23 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  // Скорость воспроизведения (1× / 1.5× / 2×) — общая для всех встреч.
+  const [rate, setRate] = useState(() => loadRate());
+  useEffect(() => {
+    for (const a of [micRef.current, sysRef.current]) {
+      if (!a) continue;
+      a.defaultPlaybackRate = rate;
+      a.playbackRate = rate;
+    }
+  }, [rate, micUrl, sysUrl]);
+  const changeRate = (r: number) => {
+    setRate(r);
+    try {
+      localStorage.setItem(RATE_KEY, String(r));
+    } catch {
+      /* без хранилища — только на сеанс */
+    }
+  };
   // Отдельный режим — правка аудио (вырезание фрагментов) на таймлайне.
   const [editorOpen, setEditorOpen] = useState(false);
   // Версия файлов дорожек: меняется после правки аудио, чтобы <audio> и
@@ -142,7 +173,10 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
     const status = () =>
       api
         .refineStatus(meeting.id)
-        .then((s) => alive && setRefine((r) => ({ ...r, running: s.running, pending: s.pending, total: r.total || s.pending })))
+        .then((s) => {
+          if (!alive || !s) return;
+          setRefine((r) => ({ ...r, running: !!s.running, pending: s.pending ?? 0, total: r.total || (s.pending ?? 0) }));
+        })
         .catch(() => {});
     void status();
     const un = listen<{ id: string; done: number; total: number; improved: number; finished: boolean }>(
@@ -358,6 +392,48 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
         ? { segments: d.segments.map((s, j) => (j === i ? { ...s, speaker } : s)) }
         : d,
     );
+  // ---- Правка прямо в ленте: текст реплики, пропуски ----
+  const gaps = useMemo(() => (transcript ? findGaps(transcript, 3, duration) : []), [transcript, duration]);
+  const persist = async (t: Transcript) => {
+    try {
+      await api.saveTranscript(meeting.id, t);
+      setTranscript(t);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+  const saveText = (i: number, text: string) => {
+    if (transcript) void persist(setSegmentText(transcript, i, text));
+  };
+  const recognizeGap = async (g: Gap) => {
+    if (!transcript) return;
+    try {
+      const segs = await api.recognizeRange(meeting.id, g.start, g.end, getSettings().whisper.language);
+      if (segs.length === 0) {
+        setNotice(`В промежутке ${clock(g.start)}–${clock(g.end)} речь не распознана — можно дописать вручную.`);
+        return;
+      }
+      const speaker = speakerNear(transcript, g);
+      const { transcript: t } = insertSegments(
+        transcript,
+        segs.map((s) => ({ ...s, speaker })),
+      );
+      setNotice("");
+      await persist(t);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+  const addManual = async (g: Gap): Promise<number> => {
+    if (!transcript) return -1;
+    const start = g.start + 0.01;
+    const { transcript: t, index } = insertSegments(transcript, [
+      { speaker: speakerNear(transcript, g), start_secs: start, end_secs: Math.min(g.end, start + 4), text: "" },
+    ]);
+    setTranscript(t);
+    return index;
+  };
+
   // Быстрая смена говорящего в ленте (без режима правки) — сразу в файл.
   const reassign = async (i: number, speaker: string | null, following: boolean) => {
     if (!transcript) return;
@@ -541,7 +617,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
         </div>
       )}
 
-      <div className="card">
+      <div className="card player-card">
         <div className="player">
           <button
             className="play-btn"
@@ -573,6 +649,20 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
               <span>{clock(time)}</span>
               <span>{clock(duration)}</span>
             </div>
+          </div>
+          <div className="speed-pick" role="group" aria-label="Скорость воспроизведения">
+            {RATES.map((r) => (
+              <button
+                key={r}
+                type="button"
+                className={r === rate ? "seg-btn on" : "seg-btn"}
+                onClick={() => changeRate(r)}
+                aria-pressed={r === rate}
+                title={`Скорость ${rateLabel(r)}`}
+              >
+                {rateLabel(r)}
+              </button>
+            ))}
           </div>
           <div className="track-tools">
             <button
@@ -761,6 +851,12 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
             onEditText={editText}
             onEditSpeaker={editSpeaker}
             onReassign={isSolo ? undefined : reassign}
+            onSaveText={saveText}
+            rawText={(i) => transcript?.segments[i]?.text ?? ""}
+            gaps={gaps}
+            onPlayRange={playSample}
+            onRecognizeGap={recognizeGap}
+            onAddManual={addManual}
             onDeleteSegment={deleteSegment}
           />
           </>
