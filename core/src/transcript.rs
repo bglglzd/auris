@@ -128,6 +128,84 @@ pub fn merge_tracks(mic: Vec<Segment>, system: Vec<Segment>) -> Transcript {
 /// Строит ленту из ОДНОЙ дорожки: всем сегментам присваивается один говорящий
 /// `speaker`. Пустые тексты пропускаются. Для импортированных записей без
 /// диаризации (один голос); диаризация на несколько говорящих появится в M3.
+/// Слова реплики для сравнения: буквы/цифры, нижний регистр.
+fn words_of(text: &str) -> Vec<String> {
+    text.split_whitespace()
+        .map(|w| w.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect::<String>())
+        .filter(|w| !w.is_empty())
+        .collect()
+}
+
+/// Доля слов более короткой реплики, которые есть в другой (с повторами).
+fn containment(a: &[String], b: &[String]) -> f32 {
+    let (short, long) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+    if short.is_empty() {
+        return 0.0;
+    }
+    let mut pool: Vec<&String> = long.iter().collect();
+    let mut hit = 0;
+    for w in short {
+        if let Some(i) = pool.iter().position(|p| *p == w) {
+            pool.swap_remove(i);
+            hit += 1;
+        }
+    }
+    hit as f32 / short.len() as f32
+}
+
+/// `b` — повтор `a` (эхо): короче-длиннее совпадают по словам, в короткой
+/// не меньше 3 слов («Алло» / «Да» говорят оба — это не эхо).
+fn is_copy(a: &Segment, b: &Segment, min_share: f32) -> bool {
+    let (wa, wb) = (words_of(&a.text), words_of(&b.text));
+    wa.len().min(wb.len()) >= 3 && containment(&wa, &wb) >= min_share
+}
+
+/// Эхо между дорожками звонка (повторы одних и тех же слов):
+/// - реплика системного звука, повторяющая вашу реплику из микрофона чуть
+///   позже (0.15–2.5 с), — ваш голос вернулся от собеседника: убирается из
+///   звонка (иначе это «второй собеседник»);
+/// - реплика микрофона, повторяющая реплику звонка почти одновременно, —
+///   собеседник из колонок попал в микрофон: убирается из микрофона.
+///
+/// Возвращает очищенные дорожки и сколько реплик убрано из каждой.
+pub fn drop_cross_echo(mic: Vec<Segment>, system: Vec<Segment>) -> (Vec<Segment>, Vec<Segment>, usize, usize) {
+    let mut drop_mic = vec![false; mic.len()];
+    let mut drop_sys = vec![false; system.len()];
+    for (j, s) in system.iter().enumerate() {
+        for (i, m) in mic.iter().enumerate() {
+            let dt = s.start_secs - m.start_secs;
+            if !(-2.5..=2.5).contains(&dt) || !is_copy(m, s, 0.6) {
+                continue;
+            }
+            if dt >= 0.15 {
+                drop_sys[j] = true; // ваш голос вернулся из звонка
+            } else {
+                drop_mic[i] = true; // собеседник из колонок в микрофоне
+            }
+        }
+    }
+    let (dm, ds) = (drop_mic.iter().filter(|d| **d).count(), drop_sys.iter().filter(|d| **d).count());
+    let keep = |v: Vec<Segment>, drop: &[bool]| v.into_iter().zip(drop).filter(|(_, d)| !**d).map(|(s, _)| s).collect();
+    (keep(mic, &drop_mic), keep(system, &drop_sys), dm, ds)
+}
+
+/// Эхо внутри одной дорожки (телефон на громкой связи, запись микрофоном):
+/// реплика, почти дословно повторяющая предыдущую через 0.1–3 с, — копия.
+pub fn drop_self_echo(segments: Vec<Segment>) -> (Vec<Segment>, usize) {
+    let mut drop = vec![false; segments.len()];
+    for j in 0..segments.len() {
+        for i in 0..j {
+            let dt = segments[j].start_secs - segments[i].start_secs;
+            if !drop[i] && (0.1..=3.0).contains(&dt) && is_copy(&segments[i], &segments[j], 0.8) {
+                drop[j] = true;
+                break;
+            }
+        }
+    }
+    let n = drop.iter().filter(|d| **d).count();
+    (segments.into_iter().zip(drop).filter(|(_, d)| !d).map(|(s, _)| s).collect(), n)
+}
+
 /// Живая встреча, записанная микрофоном: в дорожке звонка речи почти нет
 /// (меньше 10 % слов микрофона), а в микрофоне она есть (≥ 20 слов). Тогда
 /// голоса делятся по дорожке микрофона, а не по дорожке звонка.
@@ -409,6 +487,44 @@ mod tests {
         let t = assign_speakers(whisper, diar);
         // Ближайший по середине (10.5) — кластер 2 (первый назначенный → spk0).
         assert_eq!(t.segments[0].speaker, "spk0");
+    }
+
+    #[test]
+    fn drops_echo_between_call_tracks() {
+        let seg = |a: f64, t: &str| Segment { start_secs: a, end_secs: a + 2.0, text: t.into() };
+        let mic = vec![
+            seg(1.0, "Алло"),
+            seg(5.0, "Давайте перенесём встречу на пятницу"),
+            // Собеседник из колонок попал в микрофон (почти одновременно).
+            seg(10.05, "Хорошо, в пятницу в десять утра"),
+        ];
+        let system = vec![
+            seg(1.2, "Алло"),
+            // Мой голос вернулся от собеседника через 0.6 с.
+            seg(5.6, "давайте перенесём встречу на пятницу"),
+            seg(10.0, "Хорошо, в пятницу в десять утра."),
+        ];
+        let (m, s, dm, ds) = drop_cross_echo(mic, system);
+        let mt: Vec<&str> = m.iter().map(|x| x.text.as_str()).collect();
+        let st: Vec<&str> = s.iter().map(|x| x.text.as_str()).collect();
+        assert_eq!(mt, ["Алло", "Давайте перенесём встречу на пятницу"]);
+        assert_eq!(st, ["Алло", "Хорошо, в пятницу в десять утра."]);
+        assert_eq!((dm, ds), (1, 1));
+    }
+
+    #[test]
+    fn drops_self_echo_but_keeps_real_repeats() {
+        let seg = |a: f64, t: &str| Segment { start_secs: a, end_secs: a + 2.0, text: t.into() };
+        let (out, n) = drop_self_echo(vec![
+            seg(0.0, "Я отправил договор вчера вечером"),
+            seg(0.5, "отправил договор вчера вечером"),
+            seg(4.0, "Да"),
+            seg(4.4, "Да"),
+            // Повтор через минуту — не эхо.
+            seg(60.0, "Я отправил договор вчера вечером"),
+        ]);
+        assert_eq!(n, 1);
+        assert_eq!(out.len(), 4);
     }
 
     #[test]

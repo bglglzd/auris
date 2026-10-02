@@ -53,7 +53,8 @@ Updater endpoint — `github.com/bglglzd/auris/releases/latest/download/latest.j
 `call_detector` (детект звонка по аудио-сессиям WASAPI, Windows), `cluster`
 (кластеризация голосов: AHC + отсев мелких кластеров, чистый Rust, тесты на любой
 ОС), `cli_transcriber` (внешний whisper-CLI),
-`decode` (symphonia+rubato → 16кГц/моно/i16; +opus за фичей), `diarize`
+`decode` (symphonia+rubato → 16кГц/моно/i16; +opus за фичей), `echo` (эхо
+звонка: поиск копии дорожки по огибающим + спектральное подавление), `diarize`
 (pyannote segmentation-3.0 + wespeaker на ONNX Runtime за фичей), `edit` (карта громкости + вырезание
 фрагментов + пересчёт расшифровки), `error`, `model`, `models` (каталог/статус/загрузка моделей), `recorder` (трейт +
 MockRecorder), `service` (сервис-слой: запись/импорт/расшифровка/правка/файлы), `storage`
@@ -111,6 +112,13 @@ Windows, `#[cfg(windows)]`), `mac_recorder` (macOS: микрофон через 
   `voice_analysis_track`), число в интерфейсе — всех голосов (`total_voices`).
 - Импортированная встреча: одна дорожка `audio.wav` → whisper → (с фичей diarize)
   диаризация на N голосов.
+- **Эхо звонка (v0.13.7)**: собеседник из колонок в микрофоне —
+  `echo::clean_mic_file` (копия `system` в `mic` с задержкой ≤ 0.3 с →
+  `mic_echo.wav`, по нему распознавание и голоса); ваш голос, вернувшийся в
+  звук звонка, и повторы внутри дорожки — по репликам:
+  `transcript::drop_cross_echo` / `drop_self_echo` (≥ 3 слов, совпадение по
+  словам, окно по времени). Подавлять звуком эхо в системной дорожке нельзя —
+  портит речь собеседника. Замеры — `--example echo_eval`.
 
 ### Запись (macOS, v0.9)
 `mac_recorder.rs`: `mic.wav` — cpal (CoreAudio, поток в своём треде, любая частота
