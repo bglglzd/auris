@@ -57,7 +57,7 @@ fn validate_id(id: &str) -> AppResult<()> {
     Ok(())
 }
 
-fn meeting_dir(data_root: &Path, id: &str) -> PathBuf {
+pub fn meeting_dir(data_root: &Path, id: &str) -> PathBuf {
     data_root.join("meetings").join(id)
 }
 

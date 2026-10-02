@@ -145,6 +145,10 @@ export const api = {
   /// Есть ли у встречи сохранённый анализ голосов.
   hasVoiceAnalysis: (id: string): Promise<boolean> =>
     inv("has_voice_analysis", { id }),
+  /// Фоновое уточнение трудных мест (после расшифровки). Возвращает число улучшенных мест.
+  refineTranscript: (id: string): Promise<number> => inv("refine_transcript", { id }),
+  refineStatus: (id: string): Promise<{ pending: number; running: boolean }> => inv("refine_pending", { id }),
+  cancelRefine: (id: string): Promise<void> => inv("cancel_refine", { id }),
   /// Какая дорожка разделена по голосам: system.wav / mic.wav (живая встреча) / audio.wav.
   voiceAnalysisTrack: (id: string): Promise<string | null> =>
     inv("voice_analysis_track", { id }),

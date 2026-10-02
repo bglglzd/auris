@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
 import type { Meeting, ReportKind, Transcript, TranscribeState, TrackFile } from "../types";
 import { api } from "../api";
 import { getLabels, setLabels as saveLabels, nameForSpeaker } from "../labels";
@@ -130,6 +131,44 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
     api.hasVoiceAnalysis(meeting.id).then(setHasVoices).catch(() => setHasVoices(false));
     api.voiceAnalysisTrack(meeting.id).then(setVoiceTrack).catch(() => setVoiceTrack(null));
   }, [meeting.id, isImported]);
+
+  // Фоновое уточнение трудных мест: прогресс и перезагрузка улучшенной
+  // расшифровки по ходу.
+  const [refine, setRefine] = useState<{ running: boolean; done: number; total: number; improved: number; pending: number }>(
+    { running: false, done: 0, total: 0, improved: 0, pending: 0 },
+  );
+  useEffect(() => {
+    let alive = true;
+    const status = () =>
+      api
+        .refineStatus(meeting.id)
+        .then((s) => alive && setRefine((r) => ({ ...r, running: s.running, pending: s.pending, total: r.total || s.pending })))
+        .catch(() => {});
+    void status();
+    const un = listen<{ id: string; done: number; total: number; improved: number; finished: boolean }>(
+      "refine-progress",
+      (e) => {
+        const p = e.payload;
+        if (p.id !== meeting.id || !alive) return;
+        setRefine((r) => {
+          if (p.improved > r.improved || p.finished) {
+            api.getTranscript(meeting.id).then((t) => alive && setTranscript(t)).catch(() => {});
+          }
+          return { running: !p.finished, done: p.done, total: p.total, improved: p.improved, pending: p.finished ? 0 : r.pending };
+        });
+        if (p.finished) void status();
+      },
+    ).catch(() => () => {});
+    return () => {
+      alive = false;
+      un.then((f) => f()).catch(() => {});
+    };
+  }, [meeting.id]);
+  const startRefine = () => {
+    setRefine((r) => ({ ...r, running: true, done: 0, improved: 0 }));
+    void api.refineTranscript(meeting.id).catch(() => setRefine((r) => ({ ...r, running: false })));
+  };
+  const stopRefine = () => void api.cancelRefine(meeting.id).catch(() => {});
 
   // Встречу поправили извне (меню «⋯» в списке, авто-заголовок) — подтягиваем.
   useEffect(() => setTitle(meeting.title), [meeting.title]);
@@ -695,6 +734,23 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
             />
           )}
           {notice && <p className="hint voices-notice">{notice}</p>}
+          {refine.running ? (
+            <div className="refine-pill" role="status">
+              <span className="refine-dot" aria-hidden="true" />
+              Уточняю трудные места{refine.total > 0 ? ` · ${refine.done} из ${refine.total}` : ""}
+              {refine.improved > 0 ? ` · улучшено ${refine.improved}` : ""}
+              <button type="button" className="link-btn" onClick={stopRefine}>
+                Остановить
+              </button>
+            </div>
+          ) : refine.pending > 0 && !transcribing ? (
+            <div className="refine-pill idle">
+              Осталось уточнить трудных мест: {refine.pending}
+              <button type="button" className="link-btn" onClick={startRefine}>
+                Продолжить
+              </button>
+            </div>
+          ) : null}
           <TranscriptView
             transcript={editing ? draft : shown}
             activeIndex={activeIndex}

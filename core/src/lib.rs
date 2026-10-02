@@ -20,6 +20,7 @@ pub mod nemo_mel;
 pub mod parakeet;
 pub mod profanity;
 pub mod recorder;
+pub mod refine;
 pub mod rescue;
 pub mod service;
 pub mod storage;

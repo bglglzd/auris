@@ -3,6 +3,12 @@
 All notable changes to Memiro AI. Versions follow [Semantic Versioning](https://semver.org/);
 installers for every version are on [GitHub Releases](https://github.com/bglglzd/auris/releases).
 
+## [0.13.4] — 2026-10-02
+
+### Changed
+- **The transcript is ready right after the first pass; difficult parts are refined in the background.** Noisy, overlapping or wrong-language parts are no longer processed while you wait (that froze progress at 45 % and loaded the computer). They are refined afterwards, one by one, and each improved part appears in the transcript as soon as it is ready — «Refining difficult parts N of M · Stop». Stopped refining can be resumed later («Continue»). Phrases you already edited are never overwritten.
+- Background refining is gentler: a faster Whisper mode (greedy decoding, no extra language-detection pass when the language is set), at most half of the CPU cores, and short pauses between parts.
+
 ## [0.13.3] — 2026-10-02
 
 ### Fixed
