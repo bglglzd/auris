@@ -319,7 +319,7 @@ mod tests {
     }
 
     fn seg(speaker: &str, start: f64, end: f64, text: &str) -> TranscriptSegment {
-        TranscriptSegment {
+        TranscriptSegment { origin: None,
             speaker: speaker.into(),
             start_secs: start,
             end_secs: end,

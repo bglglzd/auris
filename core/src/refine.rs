@@ -91,7 +91,8 @@ pub fn clear(meeting_dir: &Path) {
 /// Та же реплика первого прохода: время и текст не менялись (правленую
 /// пользователем реплику уточнение не трогает).
 fn same_time(a: &TranscriptSegment, b: &Segment) -> bool {
-    (a.start_secs - b.start_secs).abs() < 1e-3 && (a.end_secs - b.end_secs).abs() < 1e-3 && a.text.trim() == b.text.trim()
+    !a.is_user()
+        && (a.start_secs - b.start_secs).abs() < 1e-3 && (a.end_secs - b.end_secs).abs() < 1e-3 && a.text.trim() == b.text.trim()
 }
 
 /// Заменяет в расшифровке реплики окна (совпадающие по времени с исходными)
@@ -123,8 +124,14 @@ pub fn apply_window(t: &Transcript, originals: &[Segment], fresh: &[Segment]) ->
     };
     let mut segments: Vec<TranscriptSegment> =
         t.segments.iter().filter(|s| !originals.iter().any(|o| same_time(s, o))).cloned().collect();
-    for f in fresh.iter().filter(|f| !f.text.trim().is_empty()) {
-        segments.push(TranscriptSegment {
+    // Места, которые пользователь записал сам, не дублируем.
+    let user: Vec<&TranscriptSegment> = t.segments.iter().filter(|s| s.is_user()).collect();
+    for f in fresh
+        .iter()
+        .filter(|f| !f.text.trim().is_empty())
+        .filter(|f| !crate::transcript::covered_by_user(f.start_secs, f.end_secs, &user))
+    {
+        segments.push(TranscriptSegment { origin: None,
             speaker: speaker_for(f.start_secs, f.end_secs),
             start_secs: f.start_secs,
             end_secs: f.end_secs,
@@ -143,7 +150,7 @@ mod tests {
         Segment { start_secs: a, end_secs: b, text: t.into() }
     }
     fn tseg(sp: &str, a: f64, b: f64, t: &str) -> TranscriptSegment {
-        TranscriptSegment { speaker: sp.into(), start_secs: a, end_secs: b, text: t.into() }
+        TranscriptSegment { origin: None, speaker: sp.into(), start_secs: a, end_secs: b, text: t.into() }
     }
 
     #[test]
@@ -161,6 +168,18 @@ mod tests {
         let out = apply_window(&t, &originals, &fresh).unwrap();
         let got: Vec<(&str, &str)> = out.segments.iter().map(|s| (s.speaker.as_str(), s.text.as_str())).collect();
         assert_eq!(got, [("me", "Добрый день"), ("spk0", "Потом переходим"), ("spk1", "к следующему"), ("me", "Спасибо")]);
+    }
+
+    #[test]
+    fn does_not_duplicate_phrases_the_user_added() {
+        let mut added = tseg("spk1", 5.0, 7.0, "это я дописал");
+        added.origin = Some("user".into());
+        let t = Transcript { segments: vec![tseg("me", 3.0, 5.0, "шум"), added] };
+        let originals = vec![seg(3.0, 5.0, "шум")];
+        let fresh = vec![seg(3.0, 4.8, "Потом"), seg(5.1, 6.9, "это я дописал почти")];
+        let out = apply_window(&t, &originals, &fresh).unwrap();
+        let got: Vec<&str> = out.segments.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(got, ["Потом", "это я дописал"]);
     }
 
     #[test]

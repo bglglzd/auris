@@ -9,6 +9,10 @@
 //!
 //! Сравнение строгое (почти совпадение после транслитерации), короткие слова
 //! (< 4 букв) не трогаются — чтобы не портить обычную речь.
+//!
+//! Строка вида «как распознано => как правильно» — правило замены (так
+//! Memiro запоминает исправления пользователя: «жира => Jira»). Правило
+//! применяется к целым словам (1–3 подряд) без учёта регистра.
 
 /// Встроенный словарь: сервисы и продукты, у которых каноническое написание —
 /// латиницей. Только достаточно своеобразные имена (без обычных слов).
@@ -28,10 +32,37 @@ pub const BUILTIN: &[&str] = &[
 pub fn parse_terms(text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for t in text.split(['\n', ',', ';']) {
-        let t = t.trim();
+        // У правила «было => стало» термин — правая часть.
+        let t = split_rule(t).map(|(_, right)| right).unwrap_or(t).trim();
         if t.chars().filter(|c| c.is_alphanumeric()).count() >= 2 && !out.iter().any(|o| o.eq_ignore_ascii_case(t)) {
             out.push(t.to_string());
         }
+    }
+    out
+}
+
+/// «было => стало» (или «было → стало»).
+fn split_rule(line: &str) -> Option<(&str, &str)> {
+    let (a, b) = line.split_once("=>").or_else(|| line.split_once('→'))?;
+    let (a, b) = (a.trim(), b.trim());
+    (!a.is_empty() && !b.is_empty()).then_some((a, b))
+}
+
+/// Слово для сравнения в правилах: только буквы/цифры, нижний регистр.
+fn norm_word(w: &str) -> String {
+    w.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
+}
+
+/// Правила замены из текста словаря (левая часть — 1–3 слова).
+pub fn parse_rules(text: &str) -> Vec<(Vec<String>, String)> {
+    let mut out: Vec<(Vec<String>, String)> = Vec::new();
+    for line in text.split(['\n', ',', ';']) {
+        let Some((from, to)) = split_rule(line) else { continue };
+        let words: Vec<String> = from.split_whitespace().map(norm_word).filter(|w| !w.is_empty()).collect();
+        if words.is_empty() || words.len() > 3 || out.iter().any(|(w, _)| *w == words) {
+            continue;
+        }
+        out.push((words, to.to_string()));
     }
     out
 }
@@ -41,6 +72,8 @@ pub fn parse_terms(text: &str) -> Vec<String> {
 pub struct Vocabulary {
     pub user: Vec<String>,
     entries: Vec<Entry>,
+    /// Выученные замены: слова (нормализованные) → написание пользователя.
+    rules: Vec<(Vec<String>, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -67,11 +100,11 @@ impl Vocabulary {
             let exact = term.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c));
             entries.push(Entry { term: term.to_string(), exact, key, words: term.split_whitespace().count().max(1) });
         }
-        Self { user, entries }
+        Self { user, entries, rules: parse_rules(user_text) }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.entries.is_empty() && self.rules.is_empty()
     }
 
     /// Подсказка для Whisper: термины пользователя (до ~400 символов).
@@ -91,13 +124,28 @@ impl Vocabulary {
 
     /// Исправляет написание терминов в тексте реплики.
     pub fn correct(&self, text: &str) -> String {
-        if self.entries.is_empty() {
+        if self.is_empty() {
             return text.to_string();
         }
         let tokens: Vec<&str> = text.split(' ').collect();
         let mut out: Vec<String> = Vec::with_capacity(tokens.len());
         let mut i = 0;
         'outer: while i < tokens.len() {
+            // Выученные замены пользователя — раньше терминов (длиннее — раньше).
+            for n in (1..=3).rev() {
+                if i + n > tokens.len() {
+                    continue;
+                }
+                let group = &tokens[i..i + n];
+                let words: Vec<String> = group.iter().map(|w| norm_word(w)).collect();
+                if let Some((_, to)) = self.rules.iter().find(|(w, _)| *w == words) {
+                    let (lead, _) = split_punct(group[0]);
+                    let (_, trail) = split_punct(group[n - 1]);
+                    out.push(format!("{lead}{to}{trail}"));
+                    i += n;
+                    continue 'outer;
+                }
+            }
             // Сначала многословные термины (длиннее — раньше).
             for n in (1..=3).rev() {
                 if i + n > tokens.len() {
@@ -254,5 +302,15 @@ mod tests {
         assert_eq!(v.correct("спроси у петрова алексея"), "спроси у петрова алексея"); // падеж — не наша задача
         assert_eq!(v.prompt().as_deref(), Some("Memiro, Петров Алексей, OKR-board."));
         assert!(Vocabulary::new("", false).prompt().is_none());
+    }
+
+    #[test]
+    fn learned_rules_replace_whole_words() {
+        let v = Vocabulary::new("жира => Jira\nкубер нетес => Kubernetes\nWiki", false);
+        assert_eq!(v.correct("Заведём в жира, потом кубер нетес."), "Заведём в Jira, потом Kubernetes.");
+        // Не часть слова и не другое слово.
+        assert_eq!(v.correct("жираф пришёл"), "жираф пришёл");
+        assert_eq!(parse_terms("жира => Jira, Wiki"), ["Jira", "Wiki"]);
+        assert_eq!(v.prompt().as_deref(), Some("Jira, Kubernetes, Wiki."));
     }
 }

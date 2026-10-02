@@ -13,6 +13,7 @@ pub mod edit;
 pub mod enhance;
 pub mod error;
 pub mod langguard;
+pub mod misses;
 pub mod model;
 pub mod models;
 pub mod nemo_mel;

@@ -3,6 +3,14 @@
 All notable changes to Memiro AI. Versions follow [Semantic Versioning](https://semver.org/);
 installers for every version are on [GitHub Releases](https://github.com/bglglzd/auris/releases).
 
+## [0.13.6] — 2026-10-02
+
+### Added
+- **Add a missed phrase anywhere.** «＋» next to every phrase adds an empty bubble right after it, and «＋ Реплика» in the player adds one at the current moment (playback pauses) — for speech you hear in the recording but don't see in the transcript, even when people talk over each other and there is no pause. Pick who is speaking (any voice or «New voice»), type the text, save.
+- **Your phrases are kept.** Added and corrected phrases are marked («added by you», «corrected»); re-transcribing the meeting and background refining no longer overwrite them and don't duplicate them.
+- **Memiro learns from your corrections.** When you fix a misheard term or name («жира» → «Jira», «петрова» → «Петрова») or add a phrase with names and terms, Memiro remembers them and uses them in the next transcriptions. Everything learned is listed in Settings → Recognition → «Learned from your corrections» and can be edited. Ordinary word fixes stay local to their meeting.
+- **Why was it missed?** Under a phrase you added, Memiro shows the reason found in the audio: near-silence in the track, people talking at once, a quiet voice, heavy noise, or clear sound with unfamiliar words. The reasons (without the text) are written to the log — «Copy log» helps improve recognition.
+
 ## [0.13.5] — 2026-10-02
 
 ### Added

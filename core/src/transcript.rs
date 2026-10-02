@@ -36,6 +36,43 @@ pub struct TranscriptSegment {
     pub start_secs: f64,
     pub end_secs: f64,
     pub text: String,
+    /// Чья реплика: `None` — распознана; `"user"` — добавлена пользователем,
+    /// `"edited"` — текст исправлен пользователем. Такие реплики не трогают
+    /// ни фоновое уточнение, ни повторная расшифровка.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+}
+
+impl TranscriptSegment {
+    /// Реплика пользователя (добавленная или исправленная).
+    pub fn is_user(&self) -> bool {
+        self.origin.is_some()
+    }
+}
+
+/// Повторная расшифровка: реплики пользователя из прежней расшифровки
+/// сохраняются, а распознанные заново, которые по времени в основном
+/// приходятся на них (≥ половины длительности), отбрасываются — пользователь
+/// уже записал это место.
+pub fn keep_user_segments(old: &Transcript, fresh: Transcript) -> Transcript {
+    // Пустой пузырь, который так и не заполнили, — не реплика.
+    let user: Vec<&TranscriptSegment> =
+        old.segments.iter().filter(|s| s.is_user() && !s.text.trim().is_empty()).collect();
+    if user.is_empty() {
+        return fresh;
+    }
+    let mut segments: Vec<TranscriptSegment> =
+        fresh.segments.into_iter().filter(|f| !covered_by_user(f.start_secs, f.end_secs, &user)).collect();
+    segments.extend(user.into_iter().cloned());
+    segments.sort_by(|a, b| a.start_secs.partial_cmp(&b.start_secs).unwrap_or(std::cmp::Ordering::Equal));
+    Transcript { segments }
+}
+
+/// Отрезок `a..b` в основном (≥ 50 %) приходится на реплики пользователя.
+pub fn covered_by_user(a: f64, b: f64, user: &[&TranscriptSegment]) -> bool {
+    let len = (b - a).max(0.05);
+    let overlap: f64 = user.iter().map(|u| (b.min(u.end_secs) - a.max(u.start_secs)).max(0.0)).sum();
+    overlap >= 0.5 * len
 }
 
 /// Сегмент диаризации: интервал и сырой номер говорящего (id кластера).
@@ -62,7 +99,7 @@ pub fn merge_tracks(mic: Vec<Segment>, system: Vec<Segment>) -> Transcript {
         if s.text.trim().is_empty() {
             continue;
         }
-        segments.push(TranscriptSegment {
+        segments.push(TranscriptSegment { origin: None,
             speaker: ME.to_string(),
             start_secs: s.start_secs,
             end_secs: s.end_secs,
@@ -73,7 +110,7 @@ pub fn merge_tracks(mic: Vec<Segment>, system: Vec<Segment>) -> Transcript {
         if s.text.trim().is_empty() {
             continue;
         }
-        segments.push(TranscriptSegment {
+        segments.push(TranscriptSegment { origin: None,
             speaker: THEM.to_string(),
             start_secs: s.start_secs,
             end_secs: s.end_secs,
@@ -104,7 +141,7 @@ pub fn single_speaker(segments: Vec<Segment>, speaker: &str) -> Transcript {
     let segments = segments
         .into_iter()
         .filter(|s| !s.text.trim().is_empty())
-        .map(|s| TranscriptSegment {
+        .map(|s| TranscriptSegment { origin: None,
             speaker: speaker.to_string(),
             start_secs: s.start_secs,
             end_secs: s.end_secs,
@@ -139,7 +176,7 @@ pub fn assign_speakers(whisper: Vec<Segment>, diar: Vec<DiarSegment>) -> Transcr
             }
             None => "spk0".to_string(),
         };
-        segments.push(TranscriptSegment {
+        segments.push(TranscriptSegment { origin: None,
             speaker,
             start_secs: s.start_secs,
             end_secs: s.end_secs,
@@ -372,6 +409,42 @@ mod tests {
         let t = assign_speakers(whisper, diar);
         // Ближайший по середине (10.5) — кластер 2 (первый назначенный → spk0).
         assert_eq!(t.segments[0].speaker, "spk0");
+    }
+
+    #[test]
+    fn rerun_keeps_user_phrases() {
+        let user = |a: f64, b: f64, t: &str, o: &str| TranscriptSegment {
+            speaker: "spk1".into(),
+            start_secs: a,
+            end_secs: b,
+            text: t.into(),
+            origin: Some(o.into()),
+        };
+        let old = Transcript {
+            segments: vec![
+                TranscriptSegment { speaker: ME.into(), start_secs: 0.0, end_secs: 2.0, text: "старое".into(), origin: None },
+                user(3.0, 5.0, "добавил я", "user"),
+                user(6.0, 8.0, "исправил я", "edited"),
+                user(8.5, 9.0, " ", "user"),
+            ],
+        };
+        let fresh = merge_tracks(vec![seg(0.0, "новое"), seg(3.2, "мусор"), seg(9.0, "дальше")], vec![]);
+        let fresh = Transcript {
+            segments: fresh
+                .segments
+                .into_iter()
+                .map(|mut s| {
+                    if s.text == "мусор" {
+                        s.end_secs = 4.5;
+                    }
+                    s
+                })
+                .chain([TranscriptSegment { speaker: ME.into(), start_secs: 6.1, end_secs: 7.9, text: "ошибка".into(), origin: None }])
+                .collect(),
+        };
+        let out = keep_user_segments(&old, fresh);
+        let texts: Vec<&str> = out.segments.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(texts, ["новое", "добавил я", "исправил я", "дальше"]);
     }
 
     #[test]

@@ -15,6 +15,7 @@ import type {
   AiCheck,
   MeetingContext,
   ModelInfo,
+  MissDiagnosis,
 } from "./types";
 import { logError, logInfo } from "./log";
 
@@ -34,7 +35,7 @@ function whisperOptions(w: WhisperConfig) {
     whisperPath: w.whisperPath || undefined,
     model: w.model || undefined,
     language: w.language || undefined,
-    vocabulary: w.vocabulary?.trim() || undefined,
+    vocabulary: [w.vocabulary, w.learned].map((v) => v?.trim()).filter(Boolean).join("\n") || undefined,
   };
 }
 
@@ -150,6 +151,12 @@ export const api = {
   refineStatus: (id: string): Promise<{ pending: number; running: boolean }> => inv("refine_pending", { id }),
   cancelRefine: (id: string): Promise<void> => inv("cancel_refine", { id }),
   /// Распознать заново промежуток записи (пропуск в расшифровке).
+  /// Правка пользователя: для дописанной реплики — разбор, почему её
+  /// пропустило распознавание.
+  recordCorrection: (
+    id: string,
+    correction: { kind: "added" | "edited"; start: number; end: number; before: string; after: string; speaker: string },
+  ): Promise<MissDiagnosis | null> => inv("record_correction", { id, correction }),
   recognizeRange: (
     id: string,
     start: number,

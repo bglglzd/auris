@@ -770,11 +770,12 @@ pub fn recluster_transcript(
     use crate::transcript::{ME, THEM};
     let relabeled = match cache.track.as_str() {
         // Звонок: голоса собеседников, «Я» не трогаем.
-        "system.wav" => crate::transcript::relabel_speakers(&transcript, &diar, |s| s.speaker != ME, Some(THEM)),
+        // Реплики, добавленные пользователем, — с его выбором говорящего.
+        "system.wav" => crate::transcript::relabel_speakers(&transcript, &diar, |s| s.speaker != ME && s.origin.as_deref() != Some("user"), Some(THEM)),
         // Живая встреча: голоса в микрофоне (реплики из звонка не трогаем);
         // один голос — «Я».
-        "mic.wav" => crate::transcript::relabel_speakers(&transcript, &diar, |s| s.speaker != THEM, Some(ME)),
-        _ => crate::transcript::relabel_speakers(&transcript, &diar, |_| true, None),
+        "mic.wav" => crate::transcript::relabel_speakers(&transcript, &diar, |s| s.speaker != THEM && s.origin.as_deref() != Some("user"), Some(ME)),
+        _ => crate::transcript::relabel_speakers(&transcript, &diar, |s| s.origin.as_deref() != Some("user"), None),
     };
     save_transcript(data_root, id, &relabeled)?;
     Ok(relabeled)
@@ -1094,19 +1095,19 @@ mod tests {
         make_recorded(dir.path(), &repo, "m1", 6);
         let transcript = Transcript {
             segments: vec![
-                crate::transcript::TranscriptSegment {
+                crate::transcript::TranscriptSegment { origin: None,
                     speaker: "me".into(),
                     start_secs: 0.0,
                     end_secs: 1.0,
                     text: "до".into(),
                 },
-                crate::transcript::TranscriptSegment {
+                crate::transcript::TranscriptSegment { origin: None,
                     speaker: "them".into(),
                     start_secs: 2.2,
                     end_secs: 2.8,
                     text: "вырезанное".into(),
                 },
-                crate::transcript::TranscriptSegment {
+                crate::transcript::TranscriptSegment { origin: None,
                     speaker: "me".into(),
                     start_secs: 4.0,
                     end_secs: 5.0,
@@ -1135,7 +1136,7 @@ mod tests {
         let (dir, repo, _rec) = setup();
         make_recorded(dir.path(), &repo, "m1", 4);
         let transcript = Transcript {
-            segments: vec![crate::transcript::TranscriptSegment {
+            segments: vec![crate::transcript::TranscriptSegment { origin: None,
                 speaker: "me".into(),
                 start_secs: 1.2,
                 end_secs: 1.8,

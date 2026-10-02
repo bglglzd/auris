@@ -5,7 +5,7 @@ import type { Transcript } from "../types";
 import type { SpeakerLabels } from "../labels";
 import { nameForSpeaker } from "../labels";
 import { clock } from "../export";
-import { runLength } from "../speakers";
+import { newSpeakerId, runLength } from "../speakers";
 import type { Gap } from "../transcriptedit";
 
 interface Props {
@@ -24,8 +24,9 @@ interface Props {
   /// id голоса или `null` для нового голоса; `following` — и следующие подряд
   /// реплики того же голоса.
   onReassign?: (index: number, speaker: string | null, following: boolean) => void;
-  /// Правка текста одной реплики прямо в ленте (пустой текст — удалить).
-  onSaveText?: (index: number, text: string) => void;
+  /// Правка текста одной реплики прямо в ленте (пустой текст — удалить);
+  /// `speaker` — выбранный говорящий для новой реплики.
+  onSaveText?: (index: number, text: string, speaker?: string) => void;
   /// Исходный (не цензурированный) текст реплики для правки.
   rawText?: (index: number) => string;
   /// Пропуски — паузы в тексте, где речь могла потеряться.
@@ -34,6 +35,12 @@ interface Props {
   onRecognizeGap?: (gap: Gap) => Promise<void>;
   /// Вставляет пустую реплику в пропуск; возвращает её индекс (для правки).
   onAddManual?: (gap: Gap) => Promise<number>;
+  /// Вставляет пустую реплику после реплики `index`; возвращает её индекс.
+  onAddAfter?: (index: number) => number;
+  /// Открыть правку реплики снаружи (кнопка «＋ Реплика» в плеере).
+  openRequest?: { index: number; nonce: number } | null;
+  /// Почему реплика не распозналась (для дописанных пользователем).
+  whyMissed?: (index: number) => string | undefined;
 }
 
 /// Инициалы для аватара спикера: 1–2 буквы из имени.
@@ -61,20 +68,42 @@ export function TranscriptView({
   onPlayRange,
   onRecognizeGap,
   onAddManual,
+  onAddAfter,
+  openRequest,
+  whyMissed,
 }: Props) {
   // Правка одной реплики на месте: индекс и черновик текста.
   const [inlineAt, setInlineAt] = useState<number | null>(null);
   const [inlineText, setInlineText] = useState("");
+  // Говорящий новой реплики (выбирается прямо в редакторе).
+  const [inlineSpeaker, setInlineSpeaker] = useState<string | undefined>(undefined);
   const [busyGap, setBusyGap] = useState<number | null>(null);
   const openInline = (i: number, text: string) => {
     setInlineAt(i);
     setInlineText(text);
+    setInlineSpeaker(undefined);
   };
   const commitInline = () => {
     if (inlineAt === null) return;
-    onSaveText?.(inlineAt, inlineText);
+    onSaveText?.(inlineAt, inlineText, inlineSpeaker);
     setInlineAt(null);
   };
+  // Запрос снаружи: открыть правку и показать реплику.
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!openRequest) return;
+    openInline(openRequest.index, "");
+    requestAnimationFrame(() => {
+      try {
+        listRef.current
+          ?.querySelector(`[data-turn="${openRequest.index}"]`)
+          ?.scrollIntoView({ block: "center", behavior: "smooth" });
+      } catch {
+        // jsdom
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openRequest]);
   const cancelInline = () => {
     // Новая (ещё пустая) реплика, которую передумали писать, — убрать.
     if (inlineAt !== null && !(rawText?.(inlineAt) ?? "").trim()) onSaveText?.(inlineAt, "");
@@ -188,24 +217,30 @@ export function TranscriptView({
     const i = speakerOrder.indexOf(id);
     return (i < 0 ? 0 : i) % 6;
   };
+  // Id для «Новый голос» в новой реплике.
+  const newVoiceId = useMemo(() => (transcript ? newSpeakerId(transcript) : null), [transcript]);
 
   if (!transcript || transcript.segments.length === 0) {
     return <div className="transcript-empty">Расшифровки пока нет.</div>;
   }
 
   return (
-    <div className={editing ? "transcript editing" : "transcript"}>
+    <div ref={listRef} className={editing ? "transcript editing" : "transcript"}>
       {!editing && gaps.filter((g) => g.after === -1).map(gapRow)}
       {transcript.segments.map((seg, i) => {
         const active = i === activeIndex;
         const name = nameForSpeaker(labels, seg.speaker);
         const idx = speakerIdx(seg.speaker);
         const inline = !editing && inlineAt === i;
+        // Новая реплика пользователя (ещё без текста) — с выбором говорящего.
+        const isNew = inline && seg.origin === "user" && !seg.text.trim();
+        const why = !editing && seg.origin === "user" ? whyMissed?.(i) : undefined;
         return (
           <Fragment key={i}>
           <div
             ref={!editing && active ? activeRef : undefined}
-            className={`turn${!editing && active ? " active" : ""}${inline ? " inline-editing" : ""}`}
+            data-turn={i}
+            className={`turn${!editing && active ? " active" : ""}${inline ? " inline-editing" : ""}${seg.origin === "user" ? " user-added" : ""}`}
             onClick={editing || inline ? undefined : () => onSeek(seg.start_secs)}
             title={editing || inline ? undefined : "Перейти к этому моменту"}
           >
@@ -299,6 +334,18 @@ export function TranscriptView({
                   <span className="turn-name">{name}</span>
                 )}
                 <span className="turn-time">{clock(seg.start_secs)}</span>
+                {!editing && seg.origin && (
+                  <span
+                    className={`turn-origin ${seg.origin}`}
+                    title={
+                      seg.origin === "user"
+                        ? "Реплику дописали вы — повторная расшифровка и уточнение её не трогают"
+                        : "Текст исправлен вами — повторная расшифровка и уточнение его не трогают"
+                    }
+                  >
+                    {seg.origin === "user" ? "добавлено вами" : "исправлено"}
+                  </span>
+                )}
                 {editing && (
                   <button
                     type="button"
@@ -319,12 +366,45 @@ export function TranscriptView({
                 />
               ) : inline ? (
                 <div className="turn-inline" onClick={(e) => e.stopPropagation()}>
+                  {isNew && speakerOptions.length > 0 && (
+                    <div className="turn-who-pick" role="radiogroup" aria-label="Кто говорит">
+                      <span className="turn-who-label">Кто говорит:</span>
+                      {speakerOptions.map((sp) => {
+                        const on = (inlineSpeaker ?? seg.speaker) === sp;
+                        return (
+                          <button
+                            key={sp}
+                            type="button"
+                            role="radio"
+                            aria-checked={on}
+                            className={on ? "who-chip on" : "who-chip"}
+                            onClick={() => setInlineSpeaker(sp)}
+                          >
+                            <span className="speaker-menu-dot" style={{ background: `var(--spk-${speakerIdx(sp)})` } as CSSProperties} />
+                            {nameForSpeaker(labels, sp)}
+                          </button>
+                        );
+                      })}
+                      {newVoiceId && (
+                        <button
+                          type="button"
+                          role="radio"
+                          aria-checked={inlineSpeaker === newVoiceId}
+                          className={inlineSpeaker === newVoiceId ? "who-chip on" : "who-chip"}
+                          onClick={() => setInlineSpeaker(newVoiceId)}
+                          title="Голоса этого человека ещё нет в списке"
+                        >
+                          ＋ Новый голос
+                        </button>
+                      )}
+                    </div>
+                  )}
                   <textarea
                     className="turn-edit"
                     autoFocus
                     value={inlineText}
                     rows={Math.max(2, Math.ceil(inlineText.length / 60))}
-                    placeholder="Что было сказано…"
+                    placeholder={isNew ? "Впишите, что слышно в записи…" : "Что было сказано…"}
                     onChange={(e) => setInlineText(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === "Escape") cancelInline();
@@ -342,10 +422,29 @@ export function TranscriptView({
                   </div>
                 </div>
               ) : (
-                <div className="turn-text">{seg.text}</div>
+                <>
+                  <div className="turn-text">{seg.text}</div>
+                  {why && <div className="turn-why">Почему не распозналось: {why}</div>}
+                </>
               )}
             </div>
             {!editing && !inline && onSaveText && (
+              <div className="turn-tools">
+              {onAddAfter && (
+                <button
+                  type="button"
+                  className="turn-edit-btn"
+                  title="Добавить пропущенную реплику после этой"
+                  aria-label="Добавить реплику после этой"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const at = onAddAfter(i);
+                    if (at >= 0) openInline(at, "");
+                  }}
+                >
+                  ＋
+                </button>
+              )}
               <button
                 type="button"
                 className="turn-edit-btn"
@@ -358,6 +457,7 @@ export function TranscriptView({
               >
                 ✎
               </button>
+              </div>
             )}
           </div>
           {!editing && gaps.filter((g) => g.after === i).map(gapRow)}
