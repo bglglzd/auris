@@ -52,6 +52,33 @@ export function mergeSpeakers(t: Transcript, from: string, into: string): Transc
   };
 }
 
+/// Сколько реплик подряд, начиная с `index`, говорит тот же голос.
+export function runLength(t: Transcript, index: number): number {
+  const sp = t.segments[index]?.speaker;
+  let n = 0;
+  while (index + n < t.segments.length && t.segments[index + n].speaker === sp) n++;
+  return n;
+}
+
+/// Меняет говорящего у реплики `index` (и, если `following`, у следующих
+/// подряд реплик того же голоса) — ручная правка ошибок разделения голосов.
+export function reassignSegment(t: Transcript, index: number, speaker: string, following = false): Transcript {
+  const count = following ? runLength(t, index) : 1;
+  return {
+    segments: t.segments.map((s, j) => (j >= index && j < index + count ? { ...s, speaker } : s)),
+  };
+}
+
+/// Id для нового голоса: следующий свободный `spkN`.
+export function newSpeakerId(t: Transcript): string {
+  let max = -1;
+  for (const s of t.segments) {
+    const m = /^spk(\d+)$/.exec(s.speaker);
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return `spk${max + 1}`;
+}
+
 /// Перенумеровывает `spkN` по порядку появления (после слияния не остаётся
 /// «дыр» вроде Спикер 1, Спикер 3) и переносит подписи на новые номера.
 export function renumberSpeakers(

@@ -53,3 +53,27 @@ describe("speakers", () => {
     });
   });
 });
+
+import { newSpeakerId, reassignSegment, runLength } from "../speakers";
+
+describe("per-phrase speaker change", () => {
+  const t = {
+    segments: [
+      { speaker: "spk0", start_secs: 0, end_secs: 1, text: "а" },
+      { speaker: "spk0", start_secs: 1, end_secs: 2, text: "б" },
+      { speaker: "spk0", start_secs: 2, end_secs: 3, text: "в" },
+      { speaker: "spk1", start_secs: 3, end_secs: 4, text: "г" },
+    ],
+  };
+  it("changes one phrase or the following run", () => {
+    expect(reassignSegment(t, 1, "spk1").segments.map((s) => s.speaker)).toEqual(["spk0", "spk1", "spk0", "spk1"]);
+    expect(reassignSegment(t, 1, "spk2", true).segments.map((s) => s.speaker)).toEqual(["spk0", "spk2", "spk2", "spk1"]);
+    expect(t.segments[1].speaker).toBe("spk0");
+    expect(runLength(t, 0)).toBe(3);
+    expect(runLength(t, 3)).toBe(1);
+  });
+  it("creates the next free voice id", () => {
+    expect(newSpeakerId(t)).toBe("spk2");
+    expect(newSpeakerId({ segments: [{ speaker: "me", start_secs: 0, end_secs: 1, text: "" }] })).toBe("spk0");
+  });
+});
