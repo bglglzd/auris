@@ -88,8 +88,10 @@ pub fn clear(meeting_dir: &Path) {
     let _ = std::fs::remove_file(meeting_dir.join(FILE));
 }
 
+/// Та же реплика первого прохода: время и текст не менялись (правленую
+/// пользователем реплику уточнение не трогает).
 fn same_time(a: &TranscriptSegment, b: &Segment) -> bool {
-    (a.start_secs - b.start_secs).abs() < 1e-3 && (a.end_secs - b.end_secs).abs() < 1e-3
+    (a.start_secs - b.start_secs).abs() < 1e-3 && (a.end_secs - b.end_secs).abs() < 1e-3 && a.text.trim() == b.text.trim()
 }
 
 /// Заменяет в расшифровке реплики окна (совпадающие по времени с исходными)
@@ -159,6 +161,13 @@ mod tests {
         let out = apply_window(&t, &originals, &fresh).unwrap();
         let got: Vec<(&str, &str)> = out.segments.iter().map(|s| (s.speaker.as_str(), s.text.as_str())).collect();
         assert_eq!(got, [("me", "Добрый день"), ("spk0", "Потом переходим"), ("spk1", "к следующему"), ("me", "Спасибо")]);
+    }
+
+    #[test]
+    fn keeps_phrases_whose_text_was_edited() {
+        let t = Transcript { segments: vec![tseg("me", 0.0, 2.0, "исправлено вручную")] };
+        let originals = vec![seg(0.0, 2.0, "исходный текст")];
+        assert!(apply_window(&t, &originals, &[seg(0.0, 2.0, "новое")]).is_none());
     }
 
     #[test]

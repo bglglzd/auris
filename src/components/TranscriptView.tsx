@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { CSSProperties } from "react";
 import type { Transcript } from "../types";
@@ -6,6 +6,7 @@ import type { SpeakerLabels } from "../labels";
 import { nameForSpeaker } from "../labels";
 import { clock } from "../export";
 import { runLength } from "../speakers";
+import type { Gap } from "../transcriptedit";
 
 interface Props {
   transcript: Transcript | null;
@@ -23,6 +24,16 @@ interface Props {
   /// id голоса или `null` для нового голоса; `following` — и следующие подряд
   /// реплики того же голоса.
   onReassign?: (index: number, speaker: string | null, following: boolean) => void;
+  /// Правка текста одной реплики прямо в ленте (пустой текст — удалить).
+  onSaveText?: (index: number, text: string) => void;
+  /// Исходный (не цензурированный) текст реплики для правки.
+  rawText?: (index: number) => string;
+  /// Пропуски — паузы в тексте, где речь могла потеряться.
+  gaps?: Gap[];
+  onPlayRange?: (start: number, end: number) => void;
+  onRecognizeGap?: (gap: Gap) => Promise<void>;
+  /// Вставляет пустую реплику в пропуск; возвращает её индекс (для правки).
+  onAddManual?: (gap: Gap) => Promise<number>;
 }
 
 /// Инициалы для аватара спикера: 1–2 буквы из имени.
@@ -44,7 +55,69 @@ export function TranscriptView({
   onEditSpeaker,
   onDeleteSegment,
   onReassign,
+  onSaveText,
+  rawText,
+  gaps = [],
+  onPlayRange,
+  onRecognizeGap,
+  onAddManual,
 }: Props) {
+  // Правка одной реплики на месте: индекс и черновик текста.
+  const [inlineAt, setInlineAt] = useState<number | null>(null);
+  const [inlineText, setInlineText] = useState("");
+  const [busyGap, setBusyGap] = useState<number | null>(null);
+  const openInline = (i: number, text: string) => {
+    setInlineAt(i);
+    setInlineText(text);
+  };
+  const commitInline = () => {
+    if (inlineAt === null) return;
+    onSaveText?.(inlineAt, inlineText);
+    setInlineAt(null);
+  };
+  const cancelInline = () => {
+    // Новая (ещё пустая) реплика, которую передумали писать, — убрать.
+    if (inlineAt !== null && !(rawText?.(inlineAt) ?? "").trim()) onSaveText?.(inlineAt, "");
+    setInlineAt(null);
+  };
+  const gapRow = (g: Gap) => (
+    <div key={`gap-${g.start}`} className="gap-row" onClick={(e) => e.stopPropagation()}>
+      <span className="gap-line" aria-hidden="true" />
+      <span className="gap-label">
+        Пропуск {clock(g.start)}–{clock(g.end)} · {Math.round(g.end - g.start)} с
+      </span>
+      {onPlayRange && (
+        <button type="button" className="gap-btn" onClick={() => onPlayRange(g.start, g.end)} title="Послушать это место">
+          ▶ Послушать
+        </button>
+      )}
+      {onRecognizeGap && (
+        <button
+          type="button"
+          className="gap-btn"
+          disabled={busyGap !== null}
+          onClick={() => {
+            setBusyGap(g.start);
+            void onRecognizeGap(g).finally(() => setBusyGap(null));
+          }}
+          title="Распознать это место заново"
+        >
+          {busyGap === g.start ? "Распознаю…" : "↻ Распознать"}
+        </button>
+      )}
+      {onAddManual && (
+        <button
+          type="button"
+          className="gap-btn"
+          onClick={() => void onAddManual(g).then((i) => i >= 0 && openInline(i, ""))}
+          title="Дописать реплику вручную"
+        >
+          ＋ Дописать
+        </button>
+      )}
+      <span className="gap-line" aria-hidden="true" />
+    </div>
+  );
   const activeRef = useRef<HTMLDivElement>(null);
   // Открытое меню «Кто говорит» (индекс реплики) и галочка «и следующие».
   // Меню — порталом в body с fixed-позицией: лента прокручивается и
@@ -121,17 +194,19 @@ export function TranscriptView({
 
   return (
     <div className={editing ? "transcript editing" : "transcript"}>
+      {!editing && gaps.filter((g) => g.after === -1).map(gapRow)}
       {transcript.segments.map((seg, i) => {
         const active = i === activeIndex;
         const name = nameForSpeaker(labels, seg.speaker);
         const idx = speakerIdx(seg.speaker);
+        const inline = !editing && inlineAt === i;
         return (
+          <Fragment key={i}>
           <div
-            key={i}
             ref={!editing && active ? activeRef : undefined}
-            className={`turn${!editing && active ? " active" : ""}`}
-            onClick={editing ? undefined : () => onSeek(seg.start_secs)}
-            title={editing ? undefined : "Перейти к этому моменту"}
+            className={`turn${!editing && active ? " active" : ""}${inline ? " inline-editing" : ""}`}
+            onClick={editing || inline ? undefined : () => onSeek(seg.start_secs)}
+            title={editing || inline ? undefined : "Перейти к этому моменту"}
           >
             <span
               className="turn-avatar"
@@ -241,11 +316,51 @@ export function TranscriptView({
                   rows={Math.max(1, Math.ceil(seg.text.length / 60))}
                   onChange={(e) => onEditText?.(i, e.target.value)}
                 />
+              ) : inline ? (
+                <div className="turn-inline" onClick={(e) => e.stopPropagation()}>
+                  <textarea
+                    className="turn-edit"
+                    autoFocus
+                    value={inlineText}
+                    rows={Math.max(2, Math.ceil(inlineText.length / 60))}
+                    placeholder="Что было сказано…"
+                    onChange={(e) => setInlineText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") cancelInline();
+                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) commitInline();
+                    }}
+                  />
+                  <div className="turn-inline-actions">
+                    <span className="hint">Ctrl/⌘+Enter — сохранить, Esc — отмена. Пустой текст удалит реплику.</span>
+                    <button type="button" className="btn ghost btn-sm" onClick={cancelInline}>
+                      Отмена
+                    </button>
+                    <button type="button" className="btn primary btn-sm" onClick={commitInline}>
+                      Сохранить
+                    </button>
+                  </div>
+                </div>
               ) : (
                 <div className="turn-text">{seg.text}</div>
               )}
             </div>
+            {!editing && !inline && onSaveText && (
+              <button
+                type="button"
+                className="turn-edit-btn"
+                title="Исправить текст реплики"
+                aria-label="Исправить текст реплики"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openInline(i, rawText ? rawText(i) : seg.text);
+                }}
+              >
+                ✎
+              </button>
+            )}
           </div>
+          {!editing && gaps.filter((g) => g.after === i).map(gapRow)}
+          </Fragment>
         );
       })}
     </div>

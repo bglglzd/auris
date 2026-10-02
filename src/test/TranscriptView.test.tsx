@@ -51,3 +51,54 @@ describe("TranscriptView speaker menu", () => {
     expect(onReassign).toHaveBeenCalledWith(0, null, true);
   });
 });
+
+describe("TranscriptView inline edit and gaps", () => {
+  it("edits one phrase in place and saves with Ctrl+Enter", async () => {
+    const onSaveText = vi.fn();
+    const onSeek = vi.fn();
+    render(
+      <TranscriptView
+        transcript={transcript}
+        activeIndex={-1}
+        labels={{}}
+        onSeek={onSeek}
+        onSaveText={onSaveText}
+        rawText={(i) => transcript.segments[i].text}
+      />,
+    );
+    await userEvent.click(screen.getAllByLabelText("Исправить текст реплики")[1]);
+    const box = screen.getByPlaceholderText("Что было сказано…");
+    await userEvent.clear(box);
+    await userEvent.type(box, "Как ваши дела{Control>}{Enter}{/Control}");
+    expect(onSaveText).toHaveBeenCalledWith(1, "Как ваши дела");
+    expect(onSeek).not.toHaveBeenCalled();
+  });
+
+  it("shows gaps with listen / recognize / add actions", async () => {
+    const onPlayRange = vi.fn();
+    const onRecognizeGap = vi.fn(async () => {});
+    const onAddManual = vi.fn(async () => 1);
+    const gap = { after: 0, start: 1, end: 6 };
+    render(
+      <TranscriptView
+        transcript={transcript}
+        activeIndex={-1}
+        labels={{}}
+        onSeek={() => {}}
+        gaps={[gap]}
+        onPlayRange={onPlayRange}
+        onRecognizeGap={onRecognizeGap}
+        onAddManual={onAddManual}
+        onSaveText={() => {}}
+      />,
+    );
+    expect(screen.getByText(/Пропуск 0:01–0:06/)).toBeTruthy();
+    await userEvent.click(screen.getByText("▶ Послушать"));
+    expect(onPlayRange).toHaveBeenCalledWith(1, 6);
+    await userEvent.click(screen.getByText("↻ Распознать"));
+    expect(onRecognizeGap).toHaveBeenCalledWith(gap);
+    await userEvent.click(screen.getByText("＋ Дописать"));
+    expect(onAddManual).toHaveBeenCalledWith(gap);
+    expect(await screen.findByPlaceholderText("Что было сказано…")).toBeTruthy();
+  });
+});

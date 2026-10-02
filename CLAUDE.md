@@ -302,6 +302,13 @@ Ollama), `ai::pick_model` (настроенная → ближайшая по п
   меню «Кто говорит» (порталом в body, fixed; голоса + «Новый голос» +
   «и следующие подряд»), сразу `save_transcript` (`reassignSegment`,
   `newSpeakerId`, `runLength`).
+  С v0.13.5 — правка текста реплики по месту (✎ → textarea, `setSegmentText`;
+  пустой текст удаляет) и строки «Пропуск» между репликами (`transcriptedit.ts`:
+  `findGaps` ≥ 3 с, `insertSegments`, `speakerNear`): «Послушать»,
+  «Распознать» (команда `recognize_range`: смесь дорожек → denoise+Parakeet →
+  при пустом Whisper `transcribe_fast`), «Дописать». `refine::apply_window`
+  не трогает реплики с изменённым текстом. Скорость плеера 1×/1,5×/2×
+  (localStorage `3uxo.playbackRate`, `defaultPlaybackRate` обеих дорожек).
 
 ---
 
