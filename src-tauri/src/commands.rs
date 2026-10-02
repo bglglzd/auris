@@ -595,6 +595,7 @@ pub async fn transcribe(
             )?;
             plan.add(&audio_path, transcriber.take_refine());
             flog(&state.data_root, &format!("transcribed: audio={} segs", segs.len()));
+            let segs = drop_self_echo_logged(&state.data_root, "audio", segs);
 
             #[cfg(feature = "diarize")]
             {
@@ -634,12 +635,16 @@ pub async fn transcribe(
                 &state.data_root,
                 &format!("transcribed solo: mic={} segs", mic_segs.len()),
             );
+            let mic_segs = drop_self_echo_logged(&state.data_root, "mic", mic_segs);
             uxo_core::transcript::single_speaker(mic_segs, uxo_core::transcript::ME)
         } else {
             // Записанные дорожки нормализуем тем же декодером, что и импорт
             // (сырой WASAPI-WAV whisper не всегда расшифровывал).
             let mic_path = normalize_track(&state.data_root, &id, "mic.wav")?;
             let system_path = normalize_track(&state.data_root, &id, "system.wav")?;
+            // Звонок на колонках: голос собеседника попал в микрофон — гасим
+            // его копию, иначе «Я» говорит его словами.
+            let mic_path = remove_speaker_leak(&state.data_root, &id, &mic_path, &system_path);
 
             // Собеседников может быть несколько (групповой звонок): системную
             // дорожку делим по голосам — автоматически, если число не задано.
@@ -676,6 +681,7 @@ pub async fn transcribe(
                     system_segs.len()
                 ),
             );
+            let (mic_segs, system_segs) = drop_echo_phrases(&state.data_root, mic_segs, system_segs);
 
             #[cfg(feature = "diarize")]
             {
@@ -1370,6 +1376,57 @@ fn load_engine(
             "Whisper недоступен в этой сборке — выберите Parakeet в настройках".into(),
         ))
     }
+}
+
+/// Микрофон без голоса собеседника из колонок (`mic_echo.wav`), если он там
+/// есть; иначе — прежний файл. Ошибка подавления не мешает расшифровке.
+#[cfg_attr(not(any(feature = "whisper", feature = "parakeet")), allow(dead_code))]
+fn remove_speaker_leak(data_root: &Path, id: &str, mic: &Path, system: &Path) -> PathBuf {
+    let dst = service::meeting_dir(data_root, id).join("mic_echo.wav");
+    match uxo_core::echo::clean_mic_file(mic, system, &dst) {
+        Ok(Some(p)) => {
+            flog(data_root, &format!("echo: speaker leak in mic (lag {:.2}s, corr {:.2}) suppressed", p.lag_secs, p.corr));
+            dst
+        }
+        Ok(None) => {
+            let _ = std::fs::remove_file(&dst);
+            mic.to_path_buf()
+        }
+        Err(e) => {
+            flog(data_root, &format!("echo: leak check failed: {e}"));
+            mic.to_path_buf()
+        }
+    }
+}
+
+/// Эхо-повторы реплик: ваш голос, вернувшийся в звук звонка, и собеседник в
+/// микрофоне; затем повторы внутри каждой дорожки.
+#[cfg_attr(not(any(feature = "whisper", feature = "parakeet")), allow(dead_code))]
+fn drop_echo_phrases(
+    data_root: &Path,
+    mic: Vec<uxo_core::transcript::Segment>,
+    system: Vec<uxo_core::transcript::Segment>,
+) -> (Vec<uxo_core::transcript::Segment>, Vec<uxo_core::transcript::Segment>) {
+    let mic = drop_self_echo_logged(data_root, "mic", mic);
+    let system = drop_self_echo_logged(data_root, "system", system);
+    let (mic, system, dm, ds) = uxo_core::transcript::drop_cross_echo(mic, system);
+    if dm + ds > 0 {
+        flog(data_root, &format!("echo: dropped {ds} echo phrase(s) from call audio, {dm} from mic"));
+    }
+    (mic, system)
+}
+
+#[cfg_attr(not(any(feature = "whisper", feature = "parakeet")), allow(dead_code))]
+fn drop_self_echo_logged(
+    data_root: &Path,
+    track: &str,
+    segs: Vec<uxo_core::transcript::Segment>,
+) -> Vec<uxo_core::transcript::Segment> {
+    let (segs, n) = uxo_core::transcript::drop_self_echo(segs);
+    if n > 0 {
+        flog(data_root, &format!("echo: dropped {n} repeated phrase(s) in {track}"));
+    }
+    segs
 }
 
 /// Прогоняет записанную дорожку через декодер импорта (16 кГц/моно/i16) в

@@ -3,6 +3,13 @@
 All notable changes to Memiro AI. Versions follow [Semantic Versioning](https://semver.org/);
 installers for every version are on [GitHub Releases](https://github.com/bglglzd/auris/releases).
 
+## [0.13.7] — 2026-10-02
+
+### Fixed
+- **Echo in messenger calls is no longer a «second interlocutor».** When the other side's echo cancellation fails, your own voice comes back in the call audio a moment later — it was transcribed as another person. Such repeats of your phrases are now recognised and removed from the call side.
+- **The other person's voice from your speakers no longer appears as «Me».** When a call plays through speakers, the microphone picks it up; Memiro now finds this copy (by comparing the microphone with the call audio) and suppresses it before transcription — your own words stay. With headphones nothing changes.
+- Near-verbatim repeats of a phrase within a second or two in the same track (an echo from a phone on speaker) are dropped. The log notes how many echo phrases were removed.
+
 ## [0.13.6] — 2026-10-02
 
 ### Added

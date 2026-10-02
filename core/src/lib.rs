@@ -9,6 +9,7 @@ pub mod cluster;
 pub mod cli_transcriber;
 pub mod decode;
 pub mod diarize;
+pub mod echo;
 pub mod edit;
 pub mod enhance;
 pub mod error;
