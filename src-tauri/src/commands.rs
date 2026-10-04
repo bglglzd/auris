@@ -570,16 +570,23 @@ pub async fn transcribe(
                 .to_string();
         flog(&state.data_root, &format!("transcribe: model {model}"));
         let vocab = uxo_core::vocab::Vocabulary::new(options.vocabulary.as_deref().unwrap_or(""), true);
+        // Языки разговора: распознавание и уточнение не выходят за них.
+        let allowed = uxo_core::langguard::allowed_languages(
+            options.language.as_deref(),
+            options.languages.as_deref().unwrap_or(&[]),
+        );
+        flog(&state.data_root, &format!("transcribe: languages {}", if allowed.is_empty() { "any".to_string() } else { allowed.join("+") }));
         let transcriber = load_asr(
             &state.data_root,
             &model,
             options.language.clone(),
+            allowed.clone(),
             &vocab,
             &|frac| emit("download", frac * 100.0, 0, 0),
         )?;
 
         // Трудные места — планом в refine.json; уточняет фоновая команда.
-        let mut plan = PlanBuilder::new(options.language.clone(), options.vocabulary.clone(), vocab.clone());
+        let mut plan = PlanBuilder::new(options.language.clone(), allowed.clone(), options.vocabulary.clone(), vocab.clone());
         let transcript = if imported {
             // Импорт — одна дорожка audio.wav: текст 0..75%, голоса 75..100%.
             let audio_path = service::track_path(&state.data_root, &id, "audio.wav")?;
@@ -813,6 +820,8 @@ impl Asr for uxo_core::parakeet::ParakeetTranscriber {
 struct QualityGuard {
     primary: uxo_core::parakeet::ParakeetTranscriber,
     language: Option<String>,
+    /// Языки разговора (пусто — без ограничений).
+    allowed: Vec<String>,
     plan: std::cell::RefCell<Vec<uxo_core::refine::RefineWindow>>,
 }
 
@@ -866,8 +875,16 @@ impl Asr for QualityGuard {
             }
         }
         // Реплики не той письменности — вне уже отмеченных трудных окон.
+        // Разрешены оба языка разговора (русский и английский) — английская
+        // реплика не ошибка; разрешён один — письменность только его.
         let lang = self.language.as_deref().map(str::trim).filter(|l| !l.is_empty());
-        if let Some(target) = uxo_core::langguard::target_script(lang, &segs) {
+        let scripts = uxo_core::langguard::allowed_scripts(&self.allowed);
+        let target = match scripts.as_slice() {
+            [one] => Some(*one),
+            [] => uxo_core::langguard::target_script(lang, &segs),
+            _ => None,
+        };
+        if let Some(target) = target {
             let duration = audio.len() as f64 / SR;
             for (a, b) in uxo_core::langguard::mismatch_spans(&segs, target, 0.4, duration) {
                 if plan.iter().any(|w| a < w.end_secs && b > w.start_secs) {
@@ -982,11 +999,17 @@ fn refine_blocking(app: &AppHandle, data_root: &Path, id: &str) -> AppResult<u32
     let parakeet = uxo_core::parakeet::ParakeetTranscriber::managed(data_root, &|_| {})?;
     let vocab = uxo_core::vocab::Vocabulary::new(plan.vocabulary.as_deref().unwrap_or(""), true);
     let lang = plan.language.clone().map(|l| l.trim().to_lowercase()).filter(|l| !l.is_empty() && l != "auto");
+    // Языки разговора: Whisper выбирает только среди них, а уточнение не
+    // меняет язык уже распознанной фразы (иначе — английский перевод на
+    // месте русской речи).
+    let allowed = uxo_core::langguard::allowed_languages(lang.as_deref(), &plan.languages);
+    let scripts = uxo_core::langguard::allowed_scripts(&allowed);
+    let mut rejected = 0u32;
     let whisper: std::cell::OnceCell<Option<uxo_core::whisper::WhisperTranscriber>> = std::cell::OnceCell::new();
     let get_whisper = || {
         whisper
             .get_or_init(|| match uxo_core::whisper::WhisperTranscriber::managed(data_root, None, Some("auto".into()), &|_| {}) {
-                Ok(w) => Some(w.with_prompt(vocab.prompt())),
+                Ok(w) => Some(w.with_prompt(vocab.prompt()).with_allowed_languages(allowed.clone())),
                 Err(e) => {
                     flog(data_root, &format!("refine: whisper unavailable: {e}"));
                     None
@@ -1035,7 +1058,9 @@ fn refine_blocking(app: &AppHandle, data_root: &Path, id: &str) -> AppResult<u32
                         let mut best = orig;
                         if let Ok((alt, conf)) = parakeet.transcribe_samples(&clean) {
                             let cand = Candidate { words: words(&alt), confidence: conf };
-                            if rs::better_same_engine(orig, cand) {
+                            if !uxo_core::langguard::keeps_language(&w.originals, &alt, &scripts) {
+                                rejected += 1;
+                            } else if rs::better_same_engine(orig, cand) {
                                 best = cand;
                                 chosen = Some(alt);
                             }
@@ -1044,7 +1069,9 @@ fn refine_blocking(app: &AppHandle, data_root: &Path, id: &str) -> AppResult<u32
                             if let Some(wh) = get_whisper() {
                                 if let Ok((alt, prob)) = wh.transcribe_fast(&clean, lang.as_deref(), None) {
                                     let cand = Candidate { words: words(&alt), confidence: prob };
-                                    if rs::accept_whisper(best, cand) {
+                                    if !uxo_core::langguard::keeps_language(&w.originals, &alt, &scripts) {
+                                        rejected += 1;
+                                    } else if rs::accept_whisper(best, cand) {
                                         chosen = Some(alt);
                                     }
                                 }
@@ -1054,7 +1081,9 @@ fn refine_blocking(app: &AppHandle, data_root: &Path, id: &str) -> AppResult<u32
                     RefineKind::Lang => {
                         if let Some(wh) = get_whisper() {
                             if let Ok((alt, _)) = wh.transcribe_fast(window, None, lang.as_deref()) {
-                                if alt.iter().any(|s| !s.text.trim().is_empty()) {
+                                if !uxo_core::langguard::fixes_language(&w.originals, &alt, &scripts) {
+                                    rejected += 1;
+                                } else {
                                     chosen = Some(alt);
                                 }
                             }
@@ -1089,7 +1118,7 @@ fn refine_blocking(app: &AppHandle, data_root: &Path, id: &str) -> AppResult<u32
     flog(
         data_root,
         &format!(
-            "refine {id}: {} — {done}/{total} window(s), improved {improved}, {:.0}s",
+            "refine {id}: {} — {done}/{total} window(s), improved {improved}, rejected other-language {rejected}, {:.0}s",
             if cancelled { "stopped" } else { "done" },
             started.elapsed().as_secs_f32()
         ),
@@ -1192,9 +1221,11 @@ pub async fn recognize_range(
     start: f64,
     end: f64,
     language: Option<String>,
+    languages: Option<Vec<String>>,
 ) -> AppResult<Vec<uxo_core::transcript::Segment>> {
     let data_root = state.data_root.clone();
-    tauri::async_runtime::spawn_blocking(move || recognize_range_blocking(&data_root, &id, start, end, language))
+    let allowed = uxo_core::langguard::allowed_languages(language.as_deref(), languages.as_deref().unwrap_or(&[]));
+    tauri::async_runtime::spawn_blocking(move || recognize_range_blocking(&data_root, &id, start, end, language, allowed))
         .await
         .map_err(|e| AppError::Audio(format!("recognize join: {e}")))?
 }
@@ -1206,6 +1237,7 @@ fn recognize_range_blocking(
     _start: f64,
     _end: f64,
     _language: Option<String>,
+    _allowed: Vec<String>,
 ) -> AppResult<Vec<uxo_core::transcript::Segment>> {
     Err(AppError::InvalidState("распознавание недоступно в этой сборке".into()))
 }
@@ -1217,8 +1249,17 @@ fn recognize_range_blocking(
     start: f64,
     end: f64,
     language: Option<String>,
+    allowed: Vec<String>,
 ) -> AppResult<Vec<uxo_core::transcript::Segment>> {
     const SR: f64 = 16_000.0;
+    let scripts = uxo_core::langguard::allowed_scripts(&allowed);
+    // Реплика не на языке разговора — не берём (Parakeet в шуме «слышит»
+    // английский, Whisper без ограничения переводит).
+    let in_language = |v: Vec<uxo_core::transcript::Segment>| -> Vec<uxo_core::transcript::Segment> {
+        v.into_iter()
+            .filter(|s| scripts.is_empty() || uxo_core::langguard::dominant_script(&s.text).map(|x| scripts.contains(&x)).unwrap_or(true))
+            .collect()
+    };
     let tracks: Vec<Vec<f32>> = meeting_tracks(data_root, id).into_iter().map(|(_, a)| a).collect();
     if tracks.is_empty() {
         return Err(AppError::NotFound("звук встречи".into()));
@@ -1245,20 +1286,21 @@ fn recognize_range_blocking(
     }
     let clean = uxo_core::enhance::denoise(&mix);
     let parakeet = uxo_core::parakeet::ParakeetTranscriber::managed(data_root, &|_| {})?;
+    let (segs, _) = parakeet.transcribe_samples(&clean)?;
     #[cfg_attr(not(feature = "whisper"), allow(unused_mut))]
-    let (mut segs, _) = parakeet.transcribe_samples(&clean)?;
+    let mut segs = in_language(segs);
     let words = |v: &[uxo_core::transcript::Segment]| uxo_core::rescue::word_count(v.iter().map(|s| s.text.as_str()));
     #[cfg(feature = "whisper")]
     if words(&segs) == 0 {
         let lang = language.as_deref().map(str::trim).filter(|l| !l.is_empty() && *l != "auto");
         if let Ok(w) = uxo_core::whisper::WhisperTranscriber::managed(data_root, None, Some("auto".into()), &|_| {}) {
-            if let Ok((alt, _)) = w.transcribe_fast(&clean, lang, None) {
-                segs = alt;
+            if let Ok((alt, _)) = w.with_allowed_languages(allowed.clone()).transcribe_fast(&clean, lang, None) {
+                segs = in_language(alt);
             }
         }
     }
     #[cfg(not(feature = "whisper"))]
-    let _ = language;
+    let _ = (language, &allowed);
     flog(data_root, &format!("recognize range {start:.1}–{end:.1}s: {} words", words(&segs)));
     Ok(segs
         .into_iter()
@@ -1277,8 +1319,13 @@ struct PlanBuilder(uxo_core::refine::RefinePlan, uxo_core::vocab::Vocabulary);
 
 #[cfg_attr(not(any(feature = "whisper", feature = "parakeet")), allow(dead_code))]
 impl PlanBuilder {
-    fn new(language: Option<String>, vocabulary: Option<String>, vocab: uxo_core::vocab::Vocabulary) -> Self {
-        Self(uxo_core::refine::RefinePlan { jobs: Vec::new(), language, vocabulary }, vocab)
+    fn new(
+        language: Option<String>,
+        languages: Vec<String>,
+        vocabulary: Option<String>,
+        vocab: uxo_core::vocab::Vocabulary,
+    ) -> Self {
+        Self(uxo_core::refine::RefinePlan { jobs: Vec::new(), language, vocabulary, languages }, vocab)
     }
 
     fn add(&mut self, wav: &Path, mut windows: Vec<uxo_core::refine::RefineWindow>) {
@@ -1307,10 +1354,11 @@ fn load_asr(
     data_root: &Path,
     model: &str,
     language: Option<String>,
+    allowed: Vec<String>,
     vocab: &uxo_core::vocab::Vocabulary,
     on_download: &dyn Fn(f32),
 ) -> AppResult<Box<dyn Asr>> {
-    let inner = load_engine(data_root, model, language, vocab, on_download)?;
+    let inner = load_engine(data_root, model, language, allowed, vocab, on_download)?;
     Ok(Box::new(VocabFix { inner, vocab: vocab.clone() }))
 }
 
@@ -1345,6 +1393,7 @@ fn load_engine(
     data_root: &Path,
     model: &str,
     language: Option<String>,
+    allowed: Vec<String>,
     vocab: &uxo_core::vocab::Vocabulary,
     on_download: &dyn Fn(f32),
 ) -> AppResult<Box<dyn Asr>> {
@@ -1355,7 +1404,7 @@ fn load_engine(
             // Трудные окна и реплики «не на том языке» — в план фонового
             // уточнения (QualityGuard → refine_transcript).
             let _ = vocab;
-            return Ok(Box::new(QualityGuard { primary: parakeet, language, plan: Default::default() }));
+            return Ok(Box::new(QualityGuard { primary: parakeet, language, allowed, plan: Default::default() }));
         }
         #[cfg(not(feature = "parakeet"))]
         return Err(AppError::InvalidState(
@@ -1366,12 +1415,13 @@ fn load_engine(
     {
         Ok(Box::new(
             uxo_core::whisper::WhisperTranscriber::managed(data_root, Some(model), language, on_download)?
-                .with_prompt(vocab.prompt()),
+                .with_prompt(vocab.prompt())
+                .with_allowed_languages(allowed),
         ))
     }
     #[cfg(not(feature = "whisper"))]
     {
-        let _ = (data_root, language, vocab, on_download);
+        let _ = (data_root, language, allowed, vocab, on_download);
         Err(AppError::InvalidState(
             "Whisper недоступен в этой сборке — выберите Parakeet в настройках".into(),
         ))

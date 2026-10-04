@@ -27,6 +27,10 @@ pub struct WhisperTranscriber {
     prefer: Option<String>,
     /// Подсказка модели: термины из словаря (`initial_prompt`).
     prompt: Option<String>,
+    /// Языки разговора: Whisper выбирает только среди них (пусто — любой).
+    /// Иначе на шумном русском он «решает», что речь английская, и
+    /// переводит её на английский.
+    allowed: Vec<String>,
 }
 
 /// Режим быстрой расшифровки (уточнение трудных мест).
@@ -96,7 +100,7 @@ impl WhisperTranscriber {
             WhisperContextParameters::default(),
         )
         .map_err(|e| AppError::Audio(format!("whisper: cannot load model: {e}")))?;
-        Ok(Self { ctx, language, prefer: None, prompt: None })
+        Ok(Self { ctx, language, prefer: None, prompt: None, allowed: Vec::new() })
     }
 
     /// Автоопределение языка с приоритетным `prefer` (для участков, где
@@ -110,22 +114,43 @@ impl WhisperTranscriber {
         self
     }
 
+    /// Языки разговора (см. [`crate::langguard::allowed_languages`]).
+    pub fn with_allowed_languages(mut self, allowed: Vec<String>) -> Self {
+        self.allowed = allowed;
+        self
+    }
+
     /// Подсказка модели (термины словаря).
     pub fn with_prompt(mut self, prompt: Option<String>) -> Self {
         self.prompt = prompt.filter(|p| !p.trim().is_empty() && !p.contains('\0'));
         self
     }
 
-    /// Язык окна: автоопределение Whisper с приоритетом `prefer`. Ошибка
-    /// определения → приоритетный язык.
-    fn detect_preferring(&self, state: &mut whisper_rs::WhisperState, chunk: &[f32], prefer: &str, threads: usize) -> String {
+    /// Язык окна: автоопределение Whisper с приоритетом `prefer`; `among` —
+    /// выбирать только из этих языков. Ошибка определения → приоритетный.
+    fn detect_preferring(
+        &self,
+        state: &mut whisper_rs::WhisperState,
+        chunk: &[f32],
+        prefer: &str,
+        among: &[String],
+        threads: usize,
+    ) -> String {
         let detected = state
             .pcm_to_mel(chunk, threads.max(1))
             .ok()
             .and_then(|_| state.lang_detect(0, threads.max(1)).ok());
         let Some((id, probs)) = detected else { return prefer.to_string() };
-        let name = whisper_rs::get_lang_str(id).unwrap_or(prefer);
-        let p_det = probs.get(id.max(0) as usize).copied().unwrap_or(0.0);
+        let prob_of = |l: &str| whisper_rs::get_lang_id(l).and_then(|i| probs.get(i.max(0) as usize).copied()).unwrap_or(0.0);
+        let (name, p_det) = if among.is_empty() {
+            (whisper_rs::get_lang_str(id).unwrap_or(prefer), probs.get(id.max(0) as usize).copied().unwrap_or(0.0))
+        } else {
+            among
+                .iter()
+                .map(|l| (l.as_str(), prob_of(l)))
+                .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+                .unwrap_or((prefer, 0.0))
+        };
         let p_pref = whisper_rs::get_lang_id(prefer)
             .and_then(|i| probs.get(i.max(0) as usize).copied())
             .unwrap_or(0.0);
@@ -218,22 +243,25 @@ impl WhisperTranscriber {
             // Фоновое уточнение — не больше половины ядер: компьютер остаётся
             // отзывчивым и не перегревается.
             params.set_n_threads(if fast.is_some() { (n_threads / 2).max(2) } else { n_threads });
-            let mut window_lang: Option<String> = None;
             let (language, prefer) = match fast {
                 Some(f) => (f.force.as_deref().or(Some("auto")), f.prefer.as_deref()),
                 None => (self.language.as_deref(), self.prefer.as_deref()),
             };
-            match language {
-                Some("auto") | None => {
-                    if let Some(prefer) = prefer {
-                        window_lang = Some(self.detect_preferring(&mut state, chunk, prefer, n_threads as usize));
-                    }
+            use crate::langguard::{choose_language, LangChoice};
+            let window_lang: Option<String> = match choose_language(&self.allowed, language, prefer) {
+                LangChoice::Fixed(l) => Some(l),
+                LangChoice::Detect { prefer, among } => {
+                    Some(self.detect_preferring(&mut state, chunk, &prefer, &among, n_threads as usize))
                 }
-                Some(lang) => params.set_language(Some(lang)),
-            }
-            if let Some(l) = window_lang.as_deref() {
-                params.set_language(Some(l));
-            }
+                LangChoice::Free { prefer: Some(p) } => {
+                    Some(self.detect_preferring(&mut state, chunk, &p, &[], n_threads as usize))
+                }
+                LangChoice::Free { prefer: None } => None,
+            };
+            // Язык не выбран — просим определить его явно: по умолчанию
+            // whisper.cpp ставит «en», и русская речь тогда не распознаётся,
+            // а переводится на английский.
+            params.set_language(Some(window_lang.as_deref().unwrap_or("auto")));
             if let Some(p) = self.prompt.as_deref() {
                 params.set_initial_prompt(p);
             }

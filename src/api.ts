@@ -18,6 +18,7 @@ import type {
   MissDiagnosis,
 } from "./types";
 import { logError, logInfo } from "./log";
+import { conversationLanguages } from "./settings";
 
 /// invoke с логированием ошибок в диагностику.
 async function inv<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -36,6 +37,7 @@ function whisperOptions(w: WhisperConfig) {
     model: w.model || undefined,
     language: w.language || undefined,
     vocabulary: [w.vocabulary, w.learned].map((v) => v?.trim()).filter(Boolean).join("\n") || undefined,
+    languages: conversationLanguages(w).length ? conversationLanguages(w) : undefined,
   };
 }
 
@@ -162,8 +164,9 @@ export const api = {
     start: number,
     end: number,
     language?: string,
+    languages?: string[],
   ): Promise<{ start_secs: number; end_secs: number; text: string }[]> =>
-    inv("recognize_range", { id, start, end, language: language || null }),
+    inv("recognize_range", { id, start, end, language: language || null, languages: languages?.length ? languages : null }),
   /// Какая дорожка разделена по голосам: system.wav / mic.wav (живая встреча) / audio.wav.
   voiceAnalysisTrack: (id: string): Promise<string | null> =>
     inv("voice_analysis_track", { id }),

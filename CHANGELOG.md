@@ -3,6 +3,14 @@
 All notable changes to Memiro AI. Versions follow [Semantic Versioning](https://semver.org/);
 installers for every version are on [GitHub Releases](https://github.com/bglglzd/auris/releases).
 
+## [0.13.8] — 2026-10-04
+
+### Fixed
+- **Russian phrases no longer turn into English after refining difficult parts.** When the language was not fixed (automatic detection, or the background refining of noisy parts), Whisper fell back to English by default — and with English set it does not transcribe Russian speech, it *translates* it. The language is now always either chosen or explicitly auto-detected, and refining never changes the language of an already recognised phrase. Re-transcribe an affected meeting (↻) to replace such phrases; your own edits are kept.
+
+### Added
+- **Conversation languages** (Settings → Recognition): tick Russian, English or both. Recognition stays within the ticked languages — with only Russian ticked a phrase can never come out in English; with both, Whisper chooses only between them. Separate terms (Jira, Zoom) are written in Latin letters as before.
+
 ## [0.13.7] — 2026-10-02
 
 ### Fixed

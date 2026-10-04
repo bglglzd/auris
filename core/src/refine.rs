@@ -57,6 +57,9 @@ pub struct RefinePlan {
     pub language: Option<String>,
     #[serde(default)]
     pub vocabulary: Option<String>,
+    /// Языки разговора (пусто — по `language`, см. `langguard::allowed_languages`).
+    #[serde(default)]
+    pub languages: Vec<String>,
 }
 
 impl RefinePlan {
@@ -215,6 +218,7 @@ mod tests {
             }],
             language: Some("ru".into()),
             vocabulary: None,
+            languages: vec!["ru".into()],
         };
         save(dir.path(), &plan).unwrap();
         assert_eq!(load(dir.path()).unwrap(), Some(plan));

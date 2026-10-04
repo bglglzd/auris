@@ -76,6 +76,112 @@ pub fn is_mismatch(text: &str, target: Script) -> bool {
     bad >= 4 && good * 2 < good + bad
 }
 
+/// Языки разговора из настроек («Языки разговора»): только известные коды,
+/// без повторов. Не заданы — основной язык, если он указан явно; при
+/// автоопределении без списка — без ограничений (пусто).
+pub fn allowed_languages(language: Option<&str>, languages: &[String]) -> Vec<String> {
+    let norm = |l: &str| l.trim().to_lowercase();
+    let mut out: Vec<String> = Vec::new();
+    for l in languages.iter().map(|l| norm(l)) {
+        if !l.is_empty() && l != "auto" && !out.contains(&l) {
+            out.push(l);
+        }
+    }
+    if out.is_empty() {
+        if let Some(l) = language.map(norm).filter(|l| !l.is_empty() && l != "auto") {
+            out.push(l);
+        }
+    }
+    out
+}
+
+/// Как Whisper выбирает язык отрывка.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LangChoice {
+    /// Язык задан — без определения (Whisper не переводит на другой язык).
+    Fixed(String),
+    /// Определить по звуку, но только среди `among`, с приоритетом `prefer`.
+    Detect { prefer: String, among: Vec<String> },
+    /// Без ограничений (как раньше): определение с приоритетом, если он есть.
+    Free { prefer: Option<String> },
+}
+
+/// Язык для Whisper с учётом языков разговора: запрошенный — если разрешён;
+/// один разрешённый — он и только он; несколько — определение среди них.
+pub fn choose_language(allowed: &[String], requested: Option<&str>, prefer: Option<&str>) -> LangChoice {
+    let requested = requested.map(str::trim).filter(|l| !l.is_empty() && *l != "auto");
+    if let Some(l) = requested {
+        if allowed.is_empty() || allowed.iter().any(|a| a == l) {
+            return LangChoice::Fixed(l.to_string());
+        }
+    }
+    match allowed.len() {
+        0 => LangChoice::Free { prefer: prefer.map(str::to_string) },
+        1 => LangChoice::Fixed(allowed[0].clone()),
+        _ => LangChoice::Detect {
+            prefer: prefer.filter(|p| allowed.iter().any(|a| a == p)).unwrap_or(&allowed[0]).to_string(),
+            among: allowed.to_vec(),
+        },
+    }
+}
+
+/// Письменности разрешённых языков (без повторов).
+pub fn allowed_scripts(allowed: &[String]) -> Vec<Script> {
+    let mut out = Vec::new();
+    for l in allowed {
+        if let Some(s) = script_for_language(Some(l)) {
+            if !out.contains(&s) {
+                out.push(s);
+            }
+        }
+    }
+    out
+}
+
+/// Преобладающая письменность текста (≥ 4 букв и больше половины), иначе `None`.
+pub fn dominant_script(text: &str) -> Option<Script> {
+    let (cyr, lat) = letters(text);
+    if cyr + lat < 4 {
+        return None;
+    }
+    if cyr * 2 > cyr + lat {
+        Some(Script::Cyrillic)
+    } else if lat * 2 > cyr + lat {
+        Some(Script::Latin)
+    } else {
+        None
+    }
+}
+
+fn joined(segs: &[Segment]) -> String {
+    segs.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(" ")
+}
+
+/// Можно ли заменить реплики `originals` уточнёнными `fresh`:
+/// - каждая новая реплика — на разрешённом языке (если ограничение задано);
+/// - уточнение не меняет язык уже распознанной фразы: была по-русски —
+///   останется по-русски (Whisper, «решив», что речь английская, не
+///   распознаёт её, а переводит — отсюда английские фразы на месте русских).
+pub fn keeps_language(originals: &[Segment], fresh: &[Segment], allowed: &[Script]) -> bool {
+    if !allowed.is_empty() && fresh.iter().filter_map(|s| dominant_script(&s.text)).any(|s| !allowed.contains(&s)) {
+        return false;
+    }
+    match (dominant_script(&joined(originals)), dominant_script(&joined(fresh))) {
+        (Some(a), Some(b)) => a == b,
+        _ => true,
+    }
+}
+
+/// Уточнение реплик «не того языка»: новый вариант должен быть на
+/// разрешённом языке, а без ограничения — хотя бы сменить письменность.
+pub fn fixes_language(originals: &[Segment], fresh: &[Segment], allowed: &[Script]) -> bool {
+    let Some(new) = dominant_script(&joined(fresh)) else { return false };
+    if !allowed.is_empty() {
+        return allowed.contains(&new) && fresh.iter().filter_map(|s| dominant_script(&s.text)).all(|s| allowed.contains(&s));
+    }
+    dominant_script(&joined(originals)) != Some(new)
+}
+
 /// Участки (секунды) с репликами не той письменности: соседние (зазор < 1 с)
 /// склеиваются, края расширяются на `pad` в пределах записи.
 pub fn mismatch_spans(segs: &[Segment], target: Script, pad: f64, duration: f64) -> Vec<(f64, f64)> {
@@ -129,6 +235,54 @@ pub fn cut_wav(src: &Path, dst: &Path, from: f64, to: f64) -> AppResult<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn conversation_languages() {
+        let langs = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(allowed_languages(Some("ru"), &[]), ["ru"]);
+        assert_eq!(allowed_languages(Some("auto"), &[]), Vec::<String>::new());
+        assert_eq!(allowed_languages(Some("auto"), &langs(&["RU", "en", "ru"])), ["ru", "en"]);
+        assert_eq!(allowed_scripts(&langs(&["ru", "en", "uk"])), [Script::Cyrillic, Script::Latin]);
+    }
+
+    #[test]
+    fn whisper_language_choice() {
+        let v = |x: &[&str]| x.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // Только русский — всегда русский, что бы ни просили.
+        assert_eq!(choose_language(&v(&["ru"]), None, None), LangChoice::Fixed("ru".into()));
+        assert_eq!(choose_language(&v(&["ru"]), Some("en"), None), LangChoice::Fixed("ru".into()));
+        assert_eq!(choose_language(&v(&["ru"]), Some("auto"), Some("en")), LangChoice::Fixed("ru".into()));
+        // Русский и английский — определение только среди них.
+        assert_eq!(
+            choose_language(&v(&["ru", "en"]), None, Some("de")),
+            LangChoice::Detect { prefer: "ru".into(), among: v(&["ru", "en"]) }
+        );
+        assert_eq!(choose_language(&v(&["ru", "en"]), Some("en"), None), LangChoice::Fixed("en".into()));
+        // Без ограничений — как раньше.
+        assert_eq!(choose_language(&[], None, Some("ru")), LangChoice::Free { prefer: Some("ru".into()) });
+        assert_eq!(choose_language(&[], Some("de"), None), LangChoice::Fixed("de".into()));
+    }
+
+    #[test]
+    fn refinement_never_translates_a_phrase() {
+        let seg = |t: &str| Segment { start_secs: 0.0, end_secs: 2.0, text: t.into() };
+        let ru = vec![seg("Давайте перенесём встречу на пятницу")];
+        let en = vec![seg("Let's move the meeting to Friday")];
+        let ru2 = vec![seg("Давайте перенесём встречу в пятницу, в Zoom")];
+        // Русская фраза не становится английской — даже если английский разрешён.
+        assert!(!keeps_language(&ru, &en, &[Script::Cyrillic, Script::Latin]));
+        assert!(!keeps_language(&ru, &en, &[]));
+        // Уточнение по-русски (с термином латиницей) — можно.
+        assert!(keeps_language(&ru, &ru2, &[Script::Cyrillic]));
+        // Пропущенная речь (пусто) — только на разрешённом языке.
+        assert!(!keeps_language(&[], &en, &[Script::Cyrillic]));
+        assert!(keeps_language(&[], &en, &[Script::Cyrillic, Script::Latin]));
+        // Реплики «не того языка»: исправление — на разрешённом.
+        assert!(fixes_language(&en, &ru, &[Script::Cyrillic]));
+        assert!(!fixes_language(&en, &en, &[Script::Cyrillic]));
+        assert!(fixes_language(&en, &ru, &[]));
+        assert_eq!(dominant_script("ok"), None);
+    }
+
     use super::*;
 
     fn seg(a: f64, b: f64, t: &str) -> Segment {

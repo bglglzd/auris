@@ -71,6 +71,25 @@ export function isAiConfigured(s: AppSettings): boolean {
   return !!(s.ai.base_url && s.ai.api_key);
 }
 
+/// Языки, которые можно отметить в «Языки разговора» (пока два).
+export const CONVERSATION_LANGUAGES: [string, string][] = [
+  ["ru", "Русский"],
+  ["en", "English"],
+];
+const CONV_CODES = CONVERSATION_LANGUAGES.map(([c]) => c);
+
+/// Языки разговора: отмеченные пользователем, а если не отмечены — по
+/// основному языку (русский → только русский; «определять автоматически» →
+/// русский и английский). Основной язык вне списка (немецкий и т. п.) — без
+/// ограничения (пусто).
+export function conversationLanguages(w: AppSettings["whisper"]): string[] {
+  const chosen = (w.languages ?? []).filter((l) => CONV_CODES.includes(l));
+  if (chosen.length) return chosen;
+  const main = w.language || "ru";
+  if (main === "auto") return [...CONV_CODES];
+  return CONV_CODES.includes(main) ? [main] : [];
+}
+
 /// Политика нецензурной лексики (по умолчанию — скрывать).
 export function profanityPolicy(s: AppSettings = getSettings()): "censor" | "verbatim" {
   return s.profanity === "verbatim" ? "verbatim" : "censor";

@@ -14,7 +14,7 @@ import { applyPolicy } from "../profanity";
 import { findGaps, insertSegments, newSegmentAfter, newSegmentAt, setSegmentText, speakerNear } from "../transcriptedit";
 import { learnedLabel, learnFromEdit, mergeLearned } from "../learn";
 import type { Gap } from "../transcriptedit";
-import { getSettings, profanityPolicy, saveSettings, SETTINGS_EVENT } from "../settings";
+import { conversationLanguages, getSettings, profanityPolicy, saveSettings, SETTINGS_EVENT } from "../settings";
 import { TranscriptView } from "./TranscriptView";
 import { SpeakersPanel } from "./SpeakersPanel";
 import { ExportModal } from "./ExportModal";
@@ -460,7 +460,8 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
   const recognizeGap = async (g: Gap) => {
     if (!transcript) return;
     try {
-      const segs = await api.recognizeRange(meeting.id, g.start, g.end, getSettings().whisper.language);
+      const w = getSettings().whisper;
+      const segs = await api.recognizeRange(meeting.id, g.start, g.end, w.language, conversationLanguages(w));
       if (segs.length === 0) {
         setNotice(`В промежутке ${clock(g.start)}–${clock(g.end)} речь не распознана — можно дописать вручную.`);
         return;
