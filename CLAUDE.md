@@ -194,7 +194,13 @@ Parakeet молчит; сильный ровный шум — всегда) → 
 языка из настроек, другой — только при уверенности ≥ 0.7). (3) **словарь** —
 `vocab.rs`: пользовательские термины + встроенные сервисы; `initial_prompt`
 Whisper + исправление написания (транслит + Левенштейн, кириллические термины —
-только точно). (4) **мат** — `profanity.rs` / `src/profanity.ts` (одни правила,
+только точно). **Языки разговора (v0.13.8)**: `settings.whisper.languages`
+(ru/en, `conversationLanguages`) → `TranscribeOptions.languages` /
+`RefinePlan.languages` → `langguard::allowed_languages`; Whisper —
+`with_allowed_languages` + `langguard::choose_language` (один язык — задан,
+несколько — определение только среди них; без языка — явно `"auto"`:
+по умолчанию whisper.cpp ставит `"en"` и **переводит** русскую речь);
+уточнение не меняет язык фразы (`keeps_language` / `fixes_language`). (4) **мат** — `profanity.rs` / `src/profanity.ts` (одни правила,
 общие тесты): запись дословно, политика `settings.profanity` на показ/копию/
 экспорт/ИИ (`MeetingContext.censor`).
 

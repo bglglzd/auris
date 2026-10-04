@@ -16,6 +16,9 @@ pub struct TranscribeOptions {
     /// Словарь терминов (по строке или через запятую) — см. [`crate::vocab`].
     #[serde(default)]
     pub vocabulary: Option<String>,
+    /// Языки разговора («ru», «en»): распознавание не выходит за них.
+    #[serde(default)]
+    pub languages: Option<Vec<String>>,
 }
 
 /// Which whisper CLI family is being used; drives argument construction.

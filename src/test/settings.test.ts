@@ -95,3 +95,17 @@ describe("settings", () => {
     expect(isAiConfigured(getSettings())).toBe(false);
   });
 });
+
+describe("conversationLanguages", () => {
+  const w = (language: string, languages?: string[]) => ({ whisperPath: "", model: "", language, vocabulary: "", languages });
+  it("follows the main language until the user ticks languages", async () => {
+    const { conversationLanguages } = await import("../settings");
+    expect(conversationLanguages(w("ru"))).toEqual(["ru"]);
+    expect(conversationLanguages(w("en"))).toEqual(["en"]);
+    expect(conversationLanguages(w("auto"))).toEqual(["ru", "en"]);
+    // Язык вне списка — без ограничения.
+    expect(conversationLanguages(w("de"))).toEqual([]);
+    expect(conversationLanguages(w("ru", ["ru", "en"]))).toEqual(["ru", "en"]);
+    expect(conversationLanguages(w("ru", ["xx"]))).toEqual(["ru"]);
+  });
+});
