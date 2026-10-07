@@ -143,6 +143,7 @@ pub fn stop_recording(
         status: "recorded".into(),
         source: "recorded".into(),
         notes: String::new(),
+        collection: String::new(),
     };
     repo.insert(&meeting)?;
     Ok(meeting)
@@ -208,6 +209,7 @@ pub fn recover_orphan_recordings(
                 status: "recorded".into(),
                 source: "recorded".into(),
                 notes: String::new(),
+                collection: String::new(),
             };
             repo.insert(&meeting)?;
         }
@@ -280,6 +282,7 @@ pub fn import_to_meeting(
         status: "recorded".into(),
         source: "imported".into(),
         notes: String::new(),
+        collection: String::new(),
     })
 }
 
@@ -1043,6 +1046,7 @@ mod tests {
             status: "recorded".into(),
             source: "recorded".into(),
             notes: String::new(),
+            collection: String::new(),
         })
         .unwrap();
     }

@@ -1,5 +1,5 @@
 use crate::error::{AppError, AppResult};
-use crate::model::Meeting;
+use crate::model::{Collection, Meeting};
 use rusqlite::{params, Connection};
 
 /// Хранилище встреч поверх SQLite.
@@ -32,7 +32,16 @@ impl Repo {
                 folder TEXT NOT NULL,
                 status TEXT NOT NULL,
                 source TEXT NOT NULL DEFAULT 'recorded',
-                notes TEXT NOT NULL DEFAULT ''
+                notes TEXT NOT NULL DEFAULT '',
+                collection TEXT NOT NULL DEFAULT ''
+            )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS collections (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                created_at TEXT NOT NULL
             )",
             [],
         )?;
@@ -51,6 +60,12 @@ impl Repo {
         if !Self::column_exists(conn, "notes")? {
             conn.execute(
                 "ALTER TABLE meetings ADD COLUMN notes TEXT NOT NULL DEFAULT ''",
+                [],
+            )?;
+        }
+        if !Self::column_exists(conn, "collection")? {
+            conn.execute(
+                "ALTER TABLE meetings ADD COLUMN collection TEXT NOT NULL DEFAULT ''",
                 [],
             )?;
         }
@@ -73,8 +88,8 @@ impl Repo {
     pub fn insert(&self, m: &Meeting) -> AppResult<()> {
         self.conn.execute(
             "INSERT INTO meetings
-                (id, created_at, title, participants, topic, duration_secs, folder, status, source, notes)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                (id, created_at, title, participants, topic, duration_secs, folder, status, source, notes, collection)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 m.id,
                 m.created_at,
@@ -85,7 +100,8 @@ impl Repo {
                 m.folder,
                 m.status,
                 m.source,
-                m.notes
+                m.notes,
+                m.collection
             ],
         )?;
         Ok(())
@@ -94,7 +110,7 @@ impl Repo {
     /// Все встречи, новейшие сверху.
     pub fn list(&self) -> AppResult<Vec<Meeting>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, created_at, title, participants, topic, duration_secs, folder, status, source, notes
+            "SELECT id, created_at, title, participants, topic, duration_secs, folder, status, source, notes, collection
              FROM meetings ORDER BY created_at DESC",
         )?;
         let rows = stmt.query_map([], Self::row_to_meeting)?;
@@ -107,7 +123,7 @@ impl Repo {
 
     pub fn get(&self, id: &str) -> AppResult<Meeting> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, created_at, title, participants, topic, duration_secs, folder, status, source, notes
+            "SELECT id, created_at, title, participants, topic, duration_secs, folder, status, source, notes, collection
              FROM meetings WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(params![id], Self::row_to_meeting)?;
@@ -194,7 +210,56 @@ impl Repo {
             status: row.get(7)?,
             source: row.get(8)?,
             notes: row.get(9)?,
+            collection: row.get(10)?,
         })
+    }
+
+    // ── Папки списка встреч ────────────────────────────────────────────────
+
+    /// Все папки, по имени.
+    pub fn list_collections(&self) -> AppResult<Vec<Collection>> {
+        let mut stmt = self.conn.prepare("SELECT id, name, created_at FROM collections ORDER BY name COLLATE NOCASE")?;
+        let rows = stmt.query_map([], |r| Ok(Collection { id: r.get(0)?, name: r.get(1)?, created_at: r.get(2)? }))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    pub fn insert_collection(&self, c: &Collection) -> AppResult<()> {
+        self.conn.execute(
+            "INSERT INTO collections (id, name, created_at) VALUES (?1, ?2, ?3)",
+            params![c.id, c.name, c.created_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn rename_collection(&self, id: &str, name: &str) -> AppResult<()> {
+        let n = self.conn.execute("UPDATE collections SET name = ?1 WHERE id = ?2", params![name, id])?;
+        if n == 0 {
+            return Err(AppError::NotFound(id.to_string()));
+        }
+        Ok(())
+    }
+
+    /// Удаляет папку; встречи из неё остаются (переходят «вне папок»).
+    pub fn delete_collection(&self, id: &str) -> AppResult<()> {
+        self.conn.execute("UPDATE meetings SET collection = '' WHERE collection = ?1", params![id])?;
+        let n = self.conn.execute("DELETE FROM collections WHERE id = ?1", params![id])?;
+        if n == 0 {
+            return Err(AppError::NotFound(id.to_string()));
+        }
+        Ok(())
+    }
+
+    /// Кладёт встречу в папку (`""` — вне папок).
+    pub fn set_meeting_collection(&self, id: &str, collection: &str) -> AppResult<()> {
+        let n = self.conn.execute("UPDATE meetings SET collection = ?1 WHERE id = ?2", params![collection, id])?;
+        if n == 0 {
+            return Err(AppError::NotFound(id.to_string()));
+        }
+        Ok(())
     }
 }
 
@@ -214,6 +279,7 @@ mod tests {
             status: "recorded".into(),
             source: "recorded".into(),
             notes: String::new(),
+            collection: String::new(),
         }
     }
 
@@ -317,5 +383,23 @@ mod tests {
         assert_eq!(m.source, "recorded");
         assert_eq!(m.notes, "");
         assert_eq!(m.title, "t");
+    }
+
+    #[test]
+    fn collections_hold_meetings_and_release_them_on_delete() {
+        let repo = Repo::open_in_memory().unwrap();
+        repo.insert(&sample("m1", "2026-10-01T10:00:00Z")).unwrap();
+        repo.insert(&sample("m2", "2026-10-02T10:00:00Z")).unwrap();
+        let c = Collection { id: "c1".into(), name: "Проект".into(), created_at: "2026-10-03T00:00:00Z".into() };
+        repo.insert_collection(&c).unwrap();
+        repo.set_meeting_collection("m1", "c1").unwrap();
+        assert_eq!(repo.get("m1").unwrap().collection, "c1");
+        repo.rename_collection("c1", "Клиент").unwrap();
+        assert_eq!(repo.list_collections().unwrap()[0].name, "Клиент");
+        // Удаление папки встречи не удаляет — они выходят из неё.
+        repo.delete_collection("c1").unwrap();
+        assert!(repo.list_collections().unwrap().is_empty());
+        assert_eq!(repo.get("m1").unwrap().collection, "");
+        assert_eq!(repo.list().unwrap().len(), 2);
     }
 }

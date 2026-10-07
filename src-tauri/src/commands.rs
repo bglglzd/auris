@@ -2025,6 +2025,57 @@ pub fn update_meeting_notes(
     state.repo.lock().unwrap().update_notes(&id, &notes)
 }
 
+/// Объединяет записи `ids` (в этом порядке) в новую встречу — разговор,
+/// который прерывали и продолжали. Исходные записи остаются.
+#[tauri::command]
+pub async fn merge_meetings(state: tauri::State<'_, AppState>, ids: Vec<String>) -> AppResult<Meeting> {
+    let new_id = uuid::Uuid::new_v4().to_string();
+    let repo = state.repo.lock().unwrap();
+    let m = uxo_core::merge::merge_meetings(&repo, &state.data_root, &ids, &new_id)?;
+    flog(&state.data_root, &format!("merge: {} part(s) → {} ({} s, {})", ids.len(), m.id, m.duration_secs, m.status));
+    Ok(m)
+}
+
+/// Папки списка встреч.
+#[tauri::command]
+pub fn list_collections(state: tauri::State<AppState>) -> AppResult<Vec<uxo_core::model::Collection>> {
+    state.repo.lock().unwrap().list_collections()
+}
+
+/// Новая папка (имя без пробелов по краям; пустое — «Новая папка»).
+#[tauri::command]
+pub fn create_collection(state: tauri::State<AppState>, name: String) -> AppResult<uxo_core::model::Collection> {
+    let name = name.trim();
+    let c = uxo_core::model::Collection {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: if name.is_empty() { "Новая папка".into() } else { name.to_string() },
+        created_at: chrono::Utc::now().to_rfc3339(),
+    };
+    state.repo.lock().unwrap().insert_collection(&c)?;
+    Ok(c)
+}
+
+#[tauri::command]
+pub fn rename_collection(state: tauri::State<AppState>, id: String, name: String) -> AppResult<()> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(AppError::InvalidState("имя папки не может быть пустым".into()));
+    }
+    state.repo.lock().unwrap().rename_collection(&id, name)
+}
+
+/// Удаляет папку; встречи из неё остаются в списке.
+#[tauri::command]
+pub fn delete_collection(state: tauri::State<AppState>, id: String) -> AppResult<()> {
+    state.repo.lock().unwrap().delete_collection(&id)
+}
+
+/// Кладёт встречу в папку (пусто — вынуть из папки).
+#[tauri::command]
+pub fn set_meeting_collection(state: tauri::State<AppState>, id: String, collection: String) -> AppResult<()> {
+    state.repo.lock().unwrap().set_meeting_collection(&id, &collection)
+}
+
 /// Проверка ИИ-сервера: доступен ли, какие модели отдаёт и какую использовать
 /// (модель на сервере могли обновить — тогда `changed` и новая `model`).
 #[tauri::command]

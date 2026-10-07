@@ -1,6 +1,7 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import type {
   Meeting,
+  Collection,
   TrackFile,
   Transcript,
   AiConfig,
@@ -111,6 +112,16 @@ export const api = {
   /// Заметки к встрече.
   updateMeetingNotes: (id: string, notes: string): Promise<void> =>
     inv("update_meeting_notes", { id, notes }),
+  /// Объединяет записи (в этом порядке) в новую встречу; исходные остаются.
+  mergeMeetings: (ids: string[]): Promise<Meeting> => inv("merge_meetings", { ids }),
+  listCollections: (): Promise<Collection[]> => inv("list_collections"),
+  createCollection: (name: string): Promise<Collection> => inv("create_collection", { name }),
+  renameCollection: (id: string, name: string): Promise<void> => inv("rename_collection", { id, name }),
+  /// Удаляет папку; встречи из неё остаются в списке.
+  deleteCollection: (id: string): Promise<void> => inv("delete_collection", { id }),
+  /// Кладёт встречу в папку (пусто — вынуть из папки).
+  setMeetingCollection: (id: string, collection: string): Promise<void> =>
+    inv("set_meeting_collection", { id, collection }),
   /// Проверить ИИ-сервер: доступность, модели, актуальная модель.
   aiCheck: (config: AiConfig): Promise<AiCheck> => inv("ai_check", { config }),
 

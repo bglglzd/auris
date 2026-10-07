@@ -12,6 +12,15 @@ export interface Meeting {
   source?: string;
   /// Заметки пользователя к встрече (свободный текст).
   notes?: string;
+  /// Папка в списке встреч (id); пусто — вне папок.
+  collection?: string;
+}
+
+/// Папка списка встреч.
+export interface Collection {
+  id: string;
+  name: string;
+  created_at: string;
 }
 
 export type TrackFile = "mic.wav" | "system.wav" | "audio.wav";

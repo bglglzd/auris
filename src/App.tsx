@@ -3,7 +3,8 @@ import { listen } from "@tauri-apps/api/event";
 import { api } from "./api";
 import { getSettings } from "./settings";
 import { resolveProcesses } from "./autorecord";
-import type { Meeting, TranscribeState, TrackLevels } from "./types";
+import type { Collection, Meeting, TranscribeState, TrackLevels } from "./types";
+import { getLabels, setLabels } from "./labels";
 import { Sidebar } from "./components/Sidebar";
 import { MemiroMark } from "./components/MemiroMark";
 import { MeetingView } from "./components/MeetingView";
@@ -34,6 +35,9 @@ type ProgressEvent = {
 
 export default function App() {
   const [meetings, setMeetings] = useState<Meeting[]>([]);
+  const [collections, setCollections] = useState<Collection[]>([]);
+  // Итог действия со списком (объединение, папки): текст и вид.
+  const [listNote, setListNote] = useState<{ text: string; warn?: boolean } | null>(null);
   const [recording, setRecording] = useState(false);
   const [paused, setPaused] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -52,6 +56,7 @@ export default function App() {
 
   const refresh = useCallback(async () => {
     setMeetings(await api.listMeetings());
+    setCollections(await api.listCollections().catch(() => []));
     const st = await api.recordingState();
     setRecording(st.recording);
     setPaused(st.paused);
@@ -79,6 +84,11 @@ export default function App() {
   }, []);
   // Модель на ИИ-сервере: сверяем при запуске и вместе с проверкой обновлений.
   const [modelNote, setModelNote] = useState<AiModelChange | null>(null);
+  useEffect(() => {
+    if (!listNote) return;
+    const t = setTimeout(() => setListNote(null), 9000);
+    return () => clearTimeout(t);
+  }, [listNote]);
   useEffect(() => {
     const on = (e: Event) => setModelNote((e as CustomEvent<AiModelChange>).detail);
     window.addEventListener(AI_MODEL_EVENT, on);
@@ -286,6 +296,37 @@ export default function App() {
     await refresh();
   };
 
+  // ── Папки и объединение записей ──
+  const listAction = async (run: () => Promise<unknown>, fail: string) => {
+    try {
+      await run();
+    } catch (e) {
+      setListNote({ text: `${fail}: ${String(e)}`, warn: true });
+    }
+    await refresh();
+  };
+  const handleMerge = async (ids: string[]) => {
+    try {
+      const merged = await api.mergeMeetings(ids);
+      // Имена голосов и режим «я один» — от исходных записей.
+      const labels = ids.reduce((acc, id) => ({ ...getLabels(id), ...acc }), {});
+      if (Object.keys(labels).length) setLabels(merged.id, labels);
+      if (ids.every((id) => localStorage.getItem(`3uxo.solo.${id}`) === "1")) {
+        localStorage.setItem(`3uxo.solo.${merged.id}`, "1");
+      }
+      await refresh();
+      setSelectedId(merged.id);
+      setListNote({
+        text:
+          merged.status === "transcribed"
+            ? `Объединено записей: ${ids.length}. Расшифровки сшиты — исходные записи остались в списке.`
+            : `Объединено записей: ${ids.length}. Расшифруйте новую встречу целиком — исходные записи остались в списке.`,
+      });
+    } catch (e) {
+      setListNote({ text: `Не удалось объединить записи: ${String(e)}`, warn: true });
+    }
+  };
+
   const selected = meetings.find((m) => m.id === selectedId) ?? null;
 
   return (
@@ -322,6 +363,12 @@ export default function App() {
         }}
         onDelete={handleDelete}
         onEdit={handleEdit}
+        collections={collections}
+        onCreateFolder={(name) => listAction(() => api.createCollection(name), "Не удалось создать папку")}
+        onRenameFolder={(id, name) => listAction(() => api.renameCollection(id, name), "Не удалось переименовать папку")}
+        onDeleteFolder={(id) => listAction(() => api.deleteCollection(id), "Не удалось удалить папку")}
+        onMove={(id, c) => listAction(() => api.setMeetingCollection(id, c), "Не удалось переложить встречу")}
+        onMerge={handleMerge}
         onOpenSettings={() => {
           setNavOpen(false);
           setShowSettings(true);
@@ -409,6 +456,15 @@ export default function App() {
             )}
           </span>
           <button className="toast-close" onClick={() => setRecWarn(null)} aria-label="Закрыть">
+            ✕
+          </button>
+        </div>
+      )}
+      {listNote && (
+        <div className={listNote.warn ? "toast warn" : "toast"} role="status">
+          <span className="toast-icon">{listNote.warn ? "!" : "✦"}</span>
+          <span>{listNote.text}</span>
+          <button className="toast-close" onClick={() => setListNote(null)} aria-label="Закрыть">
             ✕
           </button>
         </div>

@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
-import type { Meeting, TranscribeState } from "../types";
+import type { Collection, Meeting, TranscribeState } from "../types";
+import { mergeOrder, toggleSelected } from "../library";
 import { getTheme, setTheme, type Theme } from "../theme";
 import { RecordButton } from "./RecordButton";
 import { MeetingList } from "./MeetingList";
@@ -28,6 +29,13 @@ interface Props {
   onDelete: (id: string) => void;
   onEdit: (id: string, patch: MeetingPatch) => void | Promise<void>;
   onOpenSettings: () => void;
+  collections: Collection[];
+  onCreateFolder: (name: string) => void | Promise<void>;
+  onRenameFolder: (id: string, name: string) => void | Promise<void>;
+  onDeleteFolder: (id: string) => void | Promise<void>;
+  onMove: (id: string, collection: string) => void | Promise<void>;
+  /// Объединить записи (в этом порядке) в одну встречу.
+  onMerge: (ids: string[]) => Promise<void>;
 }
 
 export function Sidebar(p: Props) {
@@ -35,6 +43,27 @@ export function Sidebar(p: Props) {
   const [theme, setThemeState] = useState<Theme>(() => getTheme());
 
   const searchRef = useRef<HTMLInputElement>(null);
+  // Новая папка: поле имени над списком.
+  const [newFolder, setNewFolder] = useState<string | null>(null);
+  // Объединение записей: выбранные (в порядке нажатия) и порядок склейки.
+  const [picking, setPicking] = useState(false);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [byTime, setByTime] = useState(false);
+  const [merging, setMerging] = useState(false);
+  const order = mergeOrder(picked, p.meetings, byTime);
+  const stopPicking = () => {
+    setPicking(false);
+    setPicked([]);
+  };
+  const doMerge = async () => {
+    setMerging(true);
+    try {
+      await p.onMerge(order);
+      stopPicking();
+    } finally {
+      setMerging(false);
+    }
+  };
 
   const pickTheme = (t: Theme) => {
     setTheme(t);
@@ -139,7 +168,94 @@ export function Sidebar(p: Props) {
       </div>
 
       <div className="meetings">
-        <div className="section-label">Встречи</div>
+        <div className="meetings-head">
+          <div className="section-label">Встречи</div>
+          {!picking && (
+            <>
+              <button
+                type="button"
+                className="head-btn"
+                onClick={() => setNewFolder("")}
+                title="Новая папка — собирайте в неё встречи по теме"
+                aria-label="Новая папка"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                  <path d="M12 11v5M9.5 13.5h5" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                className="head-btn"
+                onClick={() => {
+                  setPicking(true);
+                  setPicked([]);
+                }}
+                disabled={p.meetings.length < 2}
+                title="Объединить записи в один разговор (запись прерывали и продолжали)"
+                aria-label="Объединить записи"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M6 4v5a4 4 0 0 0 4 4h4a4 4 0 0 1 4 4v3" />
+                  <path d="M18 4v5a4 4 0 0 1-4 4" />
+                  <path d="m15 17 3 3 3-3" />
+                </svg>
+              </button>
+            </>
+          )}
+        </div>
+        {picking && (
+          <div className="merge-bar">
+            <div className="merge-hint">
+              {picked.length === 0
+                ? "Нажимайте на записи по порядку склейки — 1, 2, 3…"
+                : `Выбрано: ${picked.length}`}
+            </div>
+            <div className="voices-count merge-order" role="group" aria-label="Порядок склейки">
+              <button type="button" className={!byTime ? "seg-btn on" : "seg-btn"} onClick={() => setByTime(false)}>
+                По выбору
+              </button>
+              <button type="button" className={byTime ? "seg-btn on" : "seg-btn"} onClick={() => setByTime(true)}>
+                По времени
+              </button>
+            </div>
+            <div className="merge-actions">
+              <button type="button" className="btn ghost btn-sm" onClick={stopPicking} disabled={merging}>
+                Отмена
+              </button>
+              <button
+                type="button"
+                className="btn primary btn-sm"
+                disabled={picked.length < 2 || merging}
+                onClick={() => void doMerge()}
+                title="Исходные записи останутся"
+              >
+                {merging ? "Объединяю…" : `Объединить${picked.length >= 2 ? ` (${picked.length})` : ""}`}
+              </button>
+            </div>
+          </div>
+        )}
+        {newFolder !== null && (
+          <input
+            className="folder-input new"
+            autoFocus
+            value={newFolder}
+            placeholder="Имя папки — Enter"
+            aria-label="Имя новой папки"
+            onChange={(e) => setNewFolder(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setNewFolder(null);
+              if (e.key === "Enter") {
+                void p.onCreateFolder(newFolder.trim());
+                setNewFolder(null);
+              }
+            }}
+            onBlur={() => {
+              if (newFolder.trim()) void p.onCreateFolder(newFolder.trim());
+              setNewFolder(null);
+            }}
+          />
+        )}
         <MeetingList
           meetings={filtered}
           activeId={p.activeId}
@@ -147,6 +263,14 @@ export function Sidebar(p: Props) {
           onSelect={p.onSelect}
           onDelete={p.onDelete}
           onEdit={p.onEdit}
+          collections={p.collections}
+          searching={q.trim().length > 0}
+          onMove={p.onMove}
+          onRenameFolder={p.onRenameFolder}
+          onDeleteFolder={p.onDeleteFolder}
+          picking={picking}
+          pickNumber={(id) => order.indexOf(id) + 1}
+          onPick={(id) => setPicked((s) => toggleSelected(s, id))}
         />
       </div>
 
