@@ -12,6 +12,15 @@ export interface Meeting {
   source?: string;
   /// Заметки пользователя к встрече (свободный текст).
   notes?: string;
+  /// Папка в списке встреч (id); пусто — вне папок.
+  collection?: string;
+}
+
+/// Папка списка встреч.
+export interface Collection {
+  id: string;
+  name: string;
+  created_at: string;
 }
 
 export type TrackFile = "mic.wav" | "system.wav" | "audio.wav";
@@ -63,6 +72,10 @@ export interface WhisperConfig {
   learned?: string;
   /// Языки разговора («ru», «en»): распознавание не выходит за них.
   languages?: string[];
+  /// Где распознавать: на этом компьютере (по умолчанию) или на сервере ИИ.
+  engine?: "local" | "server";
+  /// Модель распознавания на сервере ИИ (например, whisper-1).
+  serverModel?: string;
 }
 
 /// Авто-запись звонков: следим за аудио-сессиями выбранных приложений и
@@ -124,6 +137,8 @@ export interface AiAutoConfig {
   /// Следить за моделью на ИИ-сервере: если её обновили (сменилось имя) —
   /// переключаться на актуальную автоматически.
   followModel: boolean;
+  /// ИИ-корректура расшифровки (только текст) после распознавания.
+  correct?: boolean;
 }
 
 /// Результат проверки ИИ-сервера.

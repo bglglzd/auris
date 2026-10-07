@@ -7,7 +7,7 @@ import { AUTO_RECORD_APPS, customProcs, resolveProcesses } from "../autorecord";
 import { CopyLogButton } from "./CopyLogButton";
 import { HotkeyCapture } from "./HotkeyCapture";
 import { ModelsManager } from "./ModelsManager";
-import { CONVERSATION_LANGUAGES, conversationLanguages, DEFAULT_MODEL } from "../settings";
+import { CONVERSATION_LANGUAGES, conversationLanguages, DEFAULT_MODEL, isAiConfigured } from "../settings";
 import { findUpdate } from "../updater";
 import type { AiCheck } from "../types";
 import { isMac } from "../platform";
@@ -59,6 +59,8 @@ const SPEECH_LANGUAGES: [string, string][] = [
 
 export function SettingsModal({ onClose }: { onClose: () => void }) {
   const [s, setS] = useState<AppSettings>(getSettings());
+  // Проверка распознавания на сервере ИИ: null | busy | ok | текст ошибки.
+  const [asrCheck, setAsrCheck] = useState<string | null>(null);
   const [proc, setProc] = useState("");
   const [version, setVersion] = useState("");
   const [updState, setUpdState] = useState("");
@@ -404,6 +406,70 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
               один раз (можно заранее — здесь) и дальше работают без интернета.
             </p>
             <div className="field">
+              <label id="asr-engine-label">Где распознавать</label>
+              <div className="voices-count lang-pick" role="radiogroup" aria-labelledby="asr-engine-label">
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={s.whisper.engine !== "server"}
+                  className={s.whisper.engine !== "server" ? "seg-btn on" : "seg-btn"}
+                  onClick={() => setS({ ...s, whisper: { ...s.whisper, engine: "local" } })}
+                >
+                  На этом компьютере
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={s.whisper.engine === "server"}
+                  className={s.whisper.engine === "server" ? "seg-btn on" : "seg-btn"}
+                  disabled={!isAiConfigured(s)}
+                  title={isAiConfigured(s) ? undefined : "Сначала подключите ИИ в разделе «Искусственный интеллект»"}
+                  onClick={() => setS({ ...s, whisper: { ...s.whisper, engine: "server" } })}
+                >
+                  На сервере ИИ
+                </button>
+              </div>
+              {s.whisper.engine === "server" ? (
+                <>
+                  <span className="hint">
+                    Запись отправляется на ваш сервер ИИ (адрес и ключ — в разделе «Искусственный интеллект»)
+                    — обычно это точнее на шумных записях, но звук покидает компьютер. Сервер должен уметь
+                    распознавать речь (OpenAI и совместимые: метод /audio/transcriptions). Разделение голосов
+                    остаётся на компьютере.
+                  </span>
+                  <div className="row-inline">
+                    <input
+                      aria-label="Модель распознавания на сервере"
+                      value={s.whisper.serverModel ?? ""}
+                      placeholder="whisper-1"
+                      onChange={(e) => wh("serverModel", e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="btn ghost btn-sm"
+                      disabled={asrCheck === "busy"}
+                      onClick={() => {
+                        setAsrCheck("busy");
+                        api
+                          .cloudAsrCheck(s.ai, s.whisper.serverModel)
+                          .then(() => setAsrCheck("ok"))
+                          .catch((e) => setAsrCheck(String(e)));
+                      }}
+                    >
+                      {asrCheck === "busy" ? "Проверяю…" : "Проверить сервер"}
+                    </button>
+                  </div>
+                  {asrCheck === "ok" && <span className="hint ok">Сервер распознаёт речь — можно расшифровывать.</span>}
+                  {asrCheck && asrCheck !== "ok" && asrCheck !== "busy" && <span className="hint warn">{asrCheck}</span>}
+                </>
+              ) : (
+                <span className="hint">
+                  Звук не покидает компьютер. Если подключён ИИ, после расшифровки он исправит ошибки по
+                  смыслу — на сервер уходит только текст (см. «ИИ-правка расшифровки» ниже).
+                </span>
+              )}
+            </div>
+            <div className="field">
               <label>Модель распознавания</label>
               <ModelsManager
                 selected={s.whisper.model || DEFAULT_MODEL}
@@ -628,6 +694,20 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                 on={s.aiAuto.followModel}
                 onChange={(v) => setS({ ...s, aiAuto: { ...s.aiAuto, followModel: v } })}
                 label="Следить за моделью сервера"
+              />
+            </div>
+            <div className="row-switch">
+              <div>
+                <div className="row-switch-title">ИИ-правка расшифровки</div>
+                <div className="hint">
+                  После расшифровки ИИ исправит неверно услышанные слова, термины и пунктуацию по смыслу
+                  разговора. Уходит только текст; ваши правки не трогаются; можно вернуть как было.
+                </div>
+              </div>
+              <Switch
+                on={s.aiAuto.correct !== false}
+                onChange={(v) => setS({ ...s, aiAuto: { ...s.aiAuto, correct: v } })}
+                label="ИИ-правка расшифровки"
               />
             </div>
             <div className="row-switch">

@@ -297,6 +297,29 @@ Ollama), `ai::pick_model` (настроенная → ближайшая по п
 - Экспорт (v0.8): одна кнопка «⬇ Экспорт» → `ExportModal`: Word (.docx — свой
   генератор `docx.ts`, без зависимостей), Markdown, TXT, субтитры SRT; в документ
   складываются стенограмма (опц. таймкоды) + выбранные ИИ-отчёты.
+- **ИИ для качества расшифровки (v0.14.0)**: ИИ-корректура — `core/src/aifix.rs`
+  (`correct`: пачки по 40 реплик → JSON-массив строк той же длины; правка
+  принимается, если не пересказ (≤ 45 % изменённых символов), тот же язык, не
+  пустая; реплики `origin` не трогаются), команды `ai_correct_transcript`
+  (бэкап `transcript.before_ai.json`, событие `ai-fix-progress`),
+  `ai_correction_available`, `revert_ai_correction`; фронт —
+  `aiauto.ts::runAutoCorrect` (после `refine_transcript`, `aiAuto.correct`),
+  кнопка ✨ и плашка «Вернуть как было» в `MeetingView`. Распознавание на
+  сервере — `core/src/cloud_asr.rs` (`/audio/transcriptions`, multipart,
+  куски ≤ 10 мин в паузах, `verbose_json` → иначе `json`), `ServerAsr` в
+  `load_asr` при `TranscribeOptions.cloud` (`settings.whisper.engine =
+  "server"`, `serverModel`), проверка — `cloud_asr_check`.
+- **Папки и объединение (v0.14.0)**: таблица `collections` + столбец
+  `meetings.collection` (миграция; имя `folder` занято каталогом встречи),
+  команды `list_collections`/`create_collection`/`rename_collection`/
+  `delete_collection` (встречи остаются)/`set_meeting_collection`; фронт —
+  `src/library.ts` (`groupMeetings`, `mergeOrder`, `toggleSelected`),
+  `MeetingList` (папки, «⋯ → В папку…», перетаскивание, свёрнутые —
+  localStorage `3uxo.folders.closed`), `Sidebar` (кнопки над списком, панель
+  объединения 1/2/3 · «По времени»). Объединение — `core/src/merge.rs`
+  (`merge_meetings`: две дорожки дополняются тишиной до общей длины, 1 с паузы;
+  есть импорт — одна дорожка `audio.wav`; расшифровки сшиваются, если есть у
+  всех), команда `merge_meetings`; исходные записи остаются.
 - Встречи (v0.8.2): меню «⋯» в `MeetingList` (переименовать / заметки / удалить) →
   `MeetingEditDialog` (порталом в body: у сайдбара `backdrop-filter`); заметки —
   столбец `notes` в БД (миграция), команда `update_meeting_notes`, поле в

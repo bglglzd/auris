@@ -3,6 +3,14 @@
 All notable changes to Memiro AI. Versions follow [Semantic Versioning](https://semver.org/);
 installers for every version are on [GitHub Releases](https://github.com/bglglzd/auris/releases).
 
+## [0.14.0] — 2026-10-07
+
+### Added
+- **Merge recordings into one conversation.** When a recording was stopped and continued, press «Merge recordings» above the list and click the parts in order — they are numbered 1, 2, 3… (or switch to «By time» to glue them oldest first). Memiro creates a new meeting from the parts (tracks stay aligned, a short pause between parts); if every part was transcribed, the transcripts are joined too — no need to transcribe again. The original recordings stay in the list.
+- **AI correction of the transcript** (when AI is connected): after transcription and background refining, the AI fixes misheard words («над дубитом» → «на дубе том»), terms and punctuation by the meaning of the conversation. Only text is sent; every phrase stays in its place with its time and speaker; rewrites, translations and changes to phrases you edited are rejected. «✨» on the transcript runs it by hand, «Undo» returns the previous text. Switch: Settings → AI → «AI transcript correction».
+- **Recognition on your AI server** (optional): Settings → Recognition → «Where to recognise» → «On the AI server». Audio is sent to your server (OpenAI and compatible, /audio/transcriptions; model whisper-1 by default, «Check server» button) in up to 10-minute parts; voice separation stays on the computer. By default recognition stays on this computer.
+- **Folders in the meeting list.** Create a folder with the button above the list, then drag meetings into it or use «⋯ → To folder…». Folders collapse, can be renamed and deleted (meetings from a deleted folder stay in the list). Search shows only folders with matching meetings.
+
 ## [0.13.8] — 2026-10-04
 
 ### Fixed

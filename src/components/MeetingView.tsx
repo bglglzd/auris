@@ -14,7 +14,8 @@ import { applyPolicy } from "../profanity";
 import { findGaps, insertSegments, newSegmentAfter, newSegmentAt, setSegmentText, speakerNear } from "../transcriptedit";
 import { learnedLabel, learnFromEdit, mergeLearned } from "../learn";
 import type { Gap } from "../transcriptedit";
-import { conversationLanguages, getSettings, profanityPolicy, saveSettings, SETTINGS_EVENT } from "../settings";
+import { conversationLanguages, getSettings, isAiConfigured, profanityPolicy, saveSettings, SETTINGS_EVENT } from "../settings";
+import { runAutoCorrect, TRANSCRIPT_EVENT } from "../aiauto";
 import { TranscriptView } from "./TranscriptView";
 import { SpeakersPanel } from "./SpeakersPanel";
 import { ExportModal } from "./ExportModal";
@@ -169,6 +170,52 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
   const [refine, setRefine] = useState<{ running: boolean; done: number; total: number; improved: number; pending: number }>(
     { running: false, done: 0, total: 0, improved: 0, pending: 0 },
   );
+  // ИИ-корректура расшифровки: идёт (сколько пачек готово), итог, можно ли откатить.
+  const [aiFix, setAiFix] = useState<{ running: boolean; done: number; total: number; changed: number | null; undo: boolean }>(
+    { running: false, done: 0, total: 0, changed: null, undo: false },
+  );
+  useEffect(() => {
+    let alive = true;
+    setAiFix({ running: false, done: 0, total: 0, changed: null, undo: false });
+    const check = () =>
+      api
+        .aiCorrectionAvailable(meeting.id)
+        .then((undo) => alive && setAiFix((a) => ({ ...a, undo })))
+        .catch(() => {});
+    void check();
+    const un = listen<{ id: string; done: number; total: number }>("ai-fix-progress", (e) => {
+      if (e.payload.id !== meeting.id || !alive) return;
+      setAiFix((a) => ({ ...a, running: e.payload.done < e.payload.total, done: e.payload.done, total: e.payload.total }));
+    }).catch(() => () => {});
+    const onChanged = (e: Event) => {
+      const d = (e as CustomEvent<{ id: string; changed: number }>).detail;
+      if (d.id !== meeting.id || !alive) return;
+      setAiFix((a) => ({ ...a, running: false, changed: d.changed }));
+      api.getTranscript(meeting.id).then((t) => alive && setTranscript(t)).catch(() => {});
+      void check();
+    };
+    window.addEventListener(TRANSCRIPT_EVENT, onChanged);
+    return () => {
+      alive = false;
+      un.then((f) => f()).catch(() => {});
+      window.removeEventListener(TRANSCRIPT_EVENT, onChanged);
+    };
+  }, [meeting.id]);
+  const startAiFix = () => {
+    setAiFix((a) => ({ ...a, running: true, done: 0, total: 0, changed: null }));
+    void runAutoCorrect(meeting.id, true).then((n) => {
+      if (n === null) setAiFix((a) => ({ ...a, running: false }));
+    });
+  };
+  const undoAiFix = async () => {
+    try {
+      const t = await api.revertAiCorrection(meeting.id);
+      setTranscript(t);
+      setAiFix({ running: false, done: 0, total: 0, changed: null, undo: false });
+    } catch (e) {
+      setError(String(e));
+    }
+  };
   useEffect(() => {
     let alive = true;
     const status = () =>
@@ -829,6 +876,21 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
                 doneLabel="✓"
                 title="Скопировать текст расшифровки без Markdown"
               />
+              {isAiConfigured(getSettings()) && (
+                <button
+                  className="btn ghost icon-btn"
+                  onClick={startAiFix}
+                  disabled={aiFix.running || refine.running}
+                  title={
+                    refine.running
+                      ? "Подождите, пока закончится уточнение трудных мест"
+                      : "ИИ-правка: исправить неверно услышанные слова, термины и пунктуацию по смыслу (на сервер ИИ уходит только текст)"
+                  }
+                  aria-label="ИИ-правка расшифровки"
+                >
+                  ✨
+                </button>
+              )}
               <button
                 className="btn ghost icon-btn"
                 onClick={startEdit}
@@ -840,7 +902,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
               <button
                 className="btn ghost icon-btn"
                 onClick={doTranscribe}
-                title="Расшифровать заново (текущие правки текста пропадут)"
+                title="Расшифровать заново (ваши правки и дописанные реплики сохранятся)"
                 aria-label="Расшифровать заново"
               >
                 ↻
@@ -886,6 +948,21 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
             />
           )}
           {notice && <p className="hint voices-notice">{notice}</p>}
+          {aiFix.running ? (
+            <div className="refine-pill" role="status">
+              <span className="refine-dot" aria-hidden="true" />
+              ИИ исправляет ошибки распознавания{aiFix.total > 0 ? ` · ${aiFix.done} из ${aiFix.total}` : "…"}
+            </div>
+          ) : aiFix.undo && !transcribing ? (
+            <div className="refine-pill idle">
+              {aiFix.changed !== null ? `ИИ исправил реплик: ${aiFix.changed}` : "Текст исправлен ИИ"}
+              <button type="button" className="link-btn" onClick={() => void undoAiFix()}>
+                Вернуть как было
+              </button>
+            </div>
+          ) : aiFix.changed === 0 ? (
+            <div className="refine-pill idle">ИИ проверил расшифровку — ошибок не нашёл</div>
+          ) : null}
           {refine.running ? (
             <div className="refine-pill" role="status">
               <span className="refine-dot" aria-hidden="true" />

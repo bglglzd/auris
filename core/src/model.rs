@@ -29,6 +29,18 @@ pub struct Meeting {
     /// Заметки пользователя к встрече (свободный текст). Пусто — нет заметок.
     #[serde(default)]
     pub notes: String,
+    /// Папка в списке встреч (id из [`Collection`]); пусто — вне папок.
+    #[serde(default)]
+    pub collection: String,
+}
+
+/// Папка списка встреч: пользователь собирает в неё встречи по теме.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Collection {
+    pub id: String,
+    pub name: String,
+    /// ISO-8601, UTC.
+    pub created_at: String,
 }
 
 /// Дефолт для `source` — на случай старых записей без этого поля.
@@ -53,6 +65,7 @@ mod tests {
             status: "recorded".into(),
             source: "recorded".into(),
             notes: "".into(),
+            collection: String::new(),
         };
         let json = serde_json::to_string(&m).unwrap();
         let back: Meeting = serde_json::from_str(&json).unwrap();
