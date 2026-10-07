@@ -3,8 +3,10 @@
 //! dependency so it builds and tests on any platform.
 
 pub mod ai;
+pub mod aifix;
 pub mod audio;
 pub mod call_detector;
+pub mod cloud_asr;
 pub mod cluster;
 pub mod cli_transcriber;
 pub mod decode;

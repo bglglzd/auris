@@ -24,7 +24,7 @@ const DEFAULTS: AppSettings = {
     startDelaySecs: 5,
     minKeepSecs: 12,
   },
-  aiAuto: { title: true, summary: true, followModel: true },
+  aiAuto: { title: true, summary: true, followModel: true, correct: true },
   notifications: !isMac,
   profanity: "censor",
 };

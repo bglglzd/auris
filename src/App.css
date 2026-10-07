@@ -4575,3 +4575,20 @@ details.adv[open] summary::before {
   padding: 4px 10px 6px;
   max-width: 220px;
 }
+
+/* Где распознавать: модель сервера + проверка (v0.14). */
+.row-inline {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.row-inline input {
+  flex: 1;
+  min-width: 0;
+}
+.hint.ok {
+  color: var(--teal);
+}
+.hint.warn {
+  color: var(--rec);
+}

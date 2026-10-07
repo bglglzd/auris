@@ -13,7 +13,7 @@ describe("settings", () => {
       language: "ru",
       vocabulary: "",
     });
-    expect(s.aiAuto).toEqual({ title: true, summary: true, followModel: true });
+    expect(s.aiAuto).toEqual({ title: true, summary: true, followModel: true, correct: true });
     expect(s.hotkey).toBe("Ctrl+Shift+R");
     expect(s.autoRecord).toEqual({
       enabled: false,

@@ -15,7 +15,7 @@ import { findUpdate, UPDATE_INTERVAL_MS } from "./updater";
 import type { UpdateInfo } from "./updater";
 import { UpdateDialog } from "./components/UpdateDialog";
 import type { MeetingPatch } from "./components/MeetingEditDialog";
-import { runAutoAi } from "./aiauto";
+import { runAutoAi, runAutoCorrect } from "./aiauto";
 import { AI_MODEL_EVENT, syncServerModel } from "./aimodel";
 import type { AiModelChange } from "./aimodel";
 import { useAppMenu } from "./appmenu";
@@ -228,7 +228,11 @@ export default function App() {
         await refresh();
         // Трудные места (шум, перебивания) уточняются в фоне — расшифровка
         // уже готова и доступна.
-        void api.refineTranscript(id).catch(() => {});
+        // Затем — ИИ-корректура текста (если ИИ подключён и она включена).
+        void api
+          .refineTranscript(id)
+          .catch(() => {})
+          .then(() => runAutoCorrect(id));
         // ИИ сам придумывает заголовок и подводит итоги (если подключён).
         const m = await api.getMeeting(id).catch(() => null);
         if (m) {

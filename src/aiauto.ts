@@ -65,3 +65,31 @@ export async function runAutoAi(meeting: Meeting): Promise<boolean> {
   }
   return changed;
 }
+
+/// Событие «расшифровка встречи изменилась» (ИИ-корректура) — detail: { id, changed }.
+export const TRANSCRIPT_EVENT = "memiro-transcript-changed";
+
+/// ИИ-корректура расшифровки (только текст, через ключ пользователя):
+/// исправляет неверно услышанные слова, термины и пунктуацию. Запускается
+/// после фонового уточнения трудных мест (иначе они мешали бы друг другу).
+/// Возвращает число исправленных реплик (или null, если не запускалась).
+export async function runAutoCorrect(meetingId: string, force = false): Promise<number | null> {
+  const s = getSettings();
+  if (!isAiConfigured(s)) return null;
+  if (!force && s.aiAuto.correct === false) return null;
+  signal({ id: meetingId, busy: true, label: "Исправляю ошибки распознавания…" });
+  try {
+    const glossary = [s.whisper.vocabulary, s.whisper.learned]
+      .map((v) => v?.trim())
+      .filter(Boolean)
+      .join("\n");
+    const r = await api.aiCorrectTranscript(meetingId, s.ai, glossary);
+    signal({ id: meetingId, busy: false });
+    window.dispatchEvent(new CustomEvent(TRANSCRIPT_EVENT, { detail: { id: meetingId, changed: r.changed } }));
+    return r.changed;
+  } catch (e) {
+    logError("ai correct", e);
+    signal({ id: meetingId, busy: false, error: `ИИ-правка расшифровки: ${String(e)}` });
+    return null;
+  }
+}

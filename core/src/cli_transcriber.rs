@@ -19,6 +19,20 @@ pub struct TranscribeOptions {
     /// Языки разговора («ru», «en»): распознавание не выходит за них.
     #[serde(default)]
     pub languages: Option<Vec<String>>,
+    /// Распознавание на сервере ИИ пользователя (по желанию; звук уходит на
+    /// сервер). `None` — на этом компьютере.
+    #[serde(default)]
+    pub cloud: Option<CloudAsr>,
+}
+
+/// Сервер распознавания речи (OpenAI-совместимый `/audio/transcriptions`).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct CloudAsr {
+    pub base_url: String,
+    pub api_key: String,
+    /// Модель распознавания (например, `whisper-1`); пусто — по умолчанию.
+    #[serde(default)]
+    pub model: String,
 }
 
 /// Which whisper CLI family is being used; drives argument construction.

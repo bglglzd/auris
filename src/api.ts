@@ -19,7 +19,7 @@ import type {
   MissDiagnosis,
 } from "./types";
 import { logError, logInfo } from "./log";
-import { conversationLanguages } from "./settings";
+import { conversationLanguages, getSettings, isAiConfigured } from "./settings";
 
 /// invoke с логированием ошибок в диагностику.
 async function inv<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -66,9 +66,15 @@ export const api = {
     logInfo(
       `transcribe start id=${id} model=${whisper.model || "default"} speakers=${speakerCount ?? "auto"}${solo ? " solo" : ""}`,
     );
+    // Распознавание на сервере ИИ — только по явному выбору и с ключом.
+    const s = getSettings();
+    const cloud =
+      whisper.engine === "server" && isAiConfigured(s)
+        ? { base_url: s.ai.base_url, api_key: s.ai.api_key, model: whisper.serverModel?.trim() || "" }
+        : undefined;
     return inv("transcribe", {
       id,
-      options: whisperOptions(whisper),
+      options: { ...whisperOptions(whisper), cloud },
       speakerCount: speakerCount ?? null,
       solo: solo ?? null,
       totalVoices: totalVoices ?? null,
@@ -112,6 +118,14 @@ export const api = {
   /// Заметки к встрече.
   updateMeetingNotes: (id: string, notes: string): Promise<void> =>
     inv("update_meeting_notes", { id, notes }),
+  /// ИИ-корректура расшифровки (только текст уходит на сервер ИИ).
+  aiCorrectTranscript: (id: string, config: AiConfig, glossary?: string): Promise<{ changed: number; rejected: number }> =>
+    inv("ai_correct_transcript", { id, config, glossary: glossary || null }),
+  aiCorrectionAvailable: (id: string): Promise<boolean> => inv("ai_correction_available", { id }),
+  revertAiCorrection: (id: string): Promise<Transcript> => inv("revert_ai_correction", { id }),
+  /// Умеет ли сервер ИИ распознавать речь.
+  cloudAsrCheck: (config: AiConfig, model?: string): Promise<void> =>
+    inv("cloud_asr_check", { config, model: model || null }),
   /// Объединяет записи (в этом порядке) в новую встречу; исходные остаются.
   mergeMeetings: (ids: string[]): Promise<Meeting> => inv("merge_meetings", { ids }),
   listCollections: (): Promise<Collection[]> => inv("list_collections"),

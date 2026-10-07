@@ -581,6 +581,7 @@ pub async fn transcribe(
             &model,
             options.language.clone(),
             allowed.clone(),
+            options.cloud.clone(),
             &vocab,
             &|frac| emit("download", frac * 100.0, 0, 0),
         )?;
@@ -752,6 +753,8 @@ pub async fn transcribe(
             _ => transcript,
         };
         service::save_transcript(&state.data_root, &id, &transcript)?;
+        // Новая расшифровка — прежняя ИИ-корректура больше не к чему откатывать.
+        let _ = std::fs::remove_file(service::meeting_dir(&state.data_root, &id).join(AI_FIX_BACKUP));
         {
             let plan = plan.finish();
             flog(&state.data_root, &format!("refine plan: {} window(s)", plan.total()));
@@ -786,6 +789,34 @@ trait Asr {
     /// Окна, отложенные для фонового уточнения (и забыть их).
     fn take_refine(&self) -> Vec<uxo_core::refine::RefineWindow> {
         Vec::new()
+    }
+}
+
+/// Распознавание на сервере ИИ пользователя (звук уходит на сервер — только
+/// по явному выбору в настройках).
+#[cfg(any(feature = "whisper", feature = "parakeet"))]
+struct ServerAsr {
+    config: AiConfig,
+    model: String,
+    language: Option<String>,
+    prompt: Option<String>,
+}
+
+#[cfg(any(feature = "whisper", feature = "parakeet"))]
+impl Asr for ServerAsr {
+    fn run(
+        &self,
+        wav: &Path,
+        progress: &dyn Fn(usize, usize),
+    ) -> AppResult<Vec<uxo_core::transcript::Segment>> {
+        uxo_core::cloud_asr::transcribe_wav(
+            &self.config,
+            &self.model,
+            self.language.as_deref(),
+            self.prompt.as_deref(),
+            wav,
+            progress,
+        )
     }
 }
 
@@ -1355,9 +1386,27 @@ fn load_asr(
     model: &str,
     language: Option<String>,
     allowed: Vec<String>,
+    cloud: Option<uxo_core::cli_transcriber::CloudAsr>,
     vocab: &uxo_core::vocab::Vocabulary,
     on_download: &dyn Fn(f32),
 ) -> AppResult<Box<dyn Asr>> {
+    if let Some(c) = cloud {
+        // Один язык разговора — подсказываем его серверу (иначе он
+        // определяет сам).
+        let language = match allowed.as_slice() {
+            [one] => Some(one.clone()),
+            _ => language.filter(|l| !l.trim().is_empty() && l != "auto" && allowed.iter().any(|a| a == l)),
+        };
+        let model = if c.model.trim().is_empty() { uxo_core::cloud_asr::DEFAULT_MODEL.to_string() } else { c.model.trim().to_string() };
+        flog(data_root, &format!("transcribe: server recognition, model {model}"));
+        let inner: Box<dyn Asr> = Box::new(ServerAsr {
+            config: AiConfig { base_url: c.base_url, api_key: c.api_key, model: String::new() },
+            model,
+            language,
+            prompt: vocab.prompt(),
+        });
+        return Ok(Box::new(VocabFix { inner, vocab: vocab.clone() }));
+    }
     let inner = load_engine(data_root, model, language, allowed, vocab, on_download)?;
     Ok(Box::new(VocabFix { inner, vocab: vocab.clone() }))
 }
@@ -2023,6 +2072,105 @@ pub fn update_meeting_notes(
     notes: String,
 ) -> AppResult<()> {
     state.repo.lock().unwrap().update_notes(&id, &notes)
+}
+
+/// Копия расшифровки до ИИ-корректуры (для «Вернуть как было»).
+const AI_FIX_BACKUP: &str = "transcript.before_ai.json";
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AiFixResult {
+    pub changed: usize,
+    pub rejected: usize,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct AiFixProgress {
+    id: String,
+    done: usize,
+    total: usize,
+}
+
+/// ИИ-корректура расшифровки через сервер ИИ пользователя (только текст):
+/// исправляет неверно услышанные слова, термины, пунктуацию; реплики,
+/// правленые пользователем, не трогает. Прежний текст сохраняется для отката.
+#[tauri::command]
+pub async fn ai_correct_transcript(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: String,
+    config: AiConfig,
+    glossary: Option<String>,
+) -> AppResult<AiFixResult> {
+    let data_root = state.data_root.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let t = service::load_transcript(&data_root, &id)?
+            .ok_or_else(|| AppError::InvalidState("нет расшифровки — сначала расшифруйте встречу".into()))?;
+        let backend = HttpChatBackend::new(config);
+        let started = std::time::Instant::now();
+        let r = uxo_core::aifix::correct(&backend, &t, glossary.as_deref(), &|done, total| {
+            let _ = app.emit("ai-fix-progress", AiFixProgress { id: id.clone(), done, total });
+        })?;
+        if r.changed > 0 {
+            // Перед ИИ-правкой с последней расшифровки — прежний текст.
+            let backup = service::meeting_dir(&data_root, &id).join(AI_FIX_BACKUP);
+            if !backup.exists() {
+                std::fs::write(&backup, serde_json::to_vec(&t)?)?;
+            }
+            // Пока шла корректура, расшифровку могли поправить — берём
+            // свежую и меняем только реплики, оставшиеся как были.
+            let fresh = service::load_transcript(&data_root, &id)?.unwrap_or(t.clone());
+            let merged = if fresh == t {
+                r.transcript
+            } else {
+                let mut out = fresh.clone();
+                for s in out.segments.iter_mut() {
+                    if let Some(i) = t.segments.iter().position(|o| o == s) {
+                        s.text = r.transcript.segments[i].text.clone();
+                    }
+                }
+                out
+            };
+            service::save_transcript(&data_root, &id, &merged)?;
+        }
+        flog(
+            &data_root,
+            &format!(
+                "ai-fix {id}: {} phrase(s) of {}, rejected {}, {:.0}s",
+                r.changed,
+                t.segments.len(),
+                r.rejected,
+                started.elapsed().as_secs_f32()
+            ),
+        );
+        Ok(AiFixResult { changed: r.changed, rejected: r.rejected })
+    })
+    .await
+    .map_err(|e| AppError::Audio(format!("ai-fix join: {e}")))?
+}
+
+/// Есть ли текст до ИИ-корректуры (можно откатить).
+#[tauri::command]
+pub fn ai_correction_available(state: tauri::State<AppState>, id: String) -> bool {
+    service::meeting_dir(&state.data_root, &id).join(AI_FIX_BACKUP).exists()
+}
+
+/// Возвращает текст расшифровки до ИИ-корректуры.
+#[tauri::command]
+pub fn revert_ai_correction(state: tauri::State<AppState>, id: String) -> AppResult<Transcript> {
+    let backup = service::meeting_dir(&state.data_root, &id).join(AI_FIX_BACKUP);
+    let t: Transcript = serde_json::from_slice(&std::fs::read(&backup)?)?;
+    service::save_transcript(&state.data_root, &id, &t)?;
+    let _ = std::fs::remove_file(backup);
+    Ok(t)
+}
+
+/// Проверка: умеет ли сервер ИИ распознавать речь (секунда тишины).
+#[tauri::command]
+pub async fn cloud_asr_check(config: AiConfig, model: Option<String>) -> AppResult<()> {
+    let model = model.filter(|m| !m.trim().is_empty()).unwrap_or_else(|| uxo_core::cloud_asr::DEFAULT_MODEL.into());
+    tauri::async_runtime::spawn_blocking(move || uxo_core::cloud_asr::check(&config, &model))
+        .await
+        .map_err(|e| AppError::Audio(format!("asr check join: {e}")))?
 }
 
 /// Объединяет записи `ids` (в этом порядке) в новую встречу — разговор,
