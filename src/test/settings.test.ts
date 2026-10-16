@@ -13,7 +13,7 @@ describe("settings", () => {
       language: "ru",
       vocabulary: "",
     });
-    expect(s.aiAuto).toEqual({ title: true, summary: true, followModel: true, correct: true });
+    expect(s.aiAuto).toEqual({ title: true, summary: true, followModel: true, correct: false });
     expect(s.hotkey).toBe("Ctrl+Shift+R");
     expect(s.autoRecord).toEqual({
       enabled: false,
@@ -98,14 +98,26 @@ describe("settings", () => {
 
 describe("conversationLanguages", () => {
   const w = (language: string, languages?: string[]) => ({ whisperPath: "", model: "", language, vocabulary: "", languages });
-  it("follows the main language until the user ticks languages", async () => {
+  it("is always Russian only", async () => {
     const { conversationLanguages } = await import("../settings");
-    expect(conversationLanguages(w("ru"))).toEqual(["ru"]);
-    expect(conversationLanguages(w("en"))).toEqual(["en"]);
-    expect(conversationLanguages(w("auto"))).toEqual(["ru", "en"]);
-    // Язык вне списка — без ограничения.
-    expect(conversationLanguages(w("de"))).toEqual([]);
-    expect(conversationLanguages(w("ru", ["ru", "en"]))).toEqual(["ru", "en"]);
-    expect(conversationLanguages(w("ru", ["xx"]))).toEqual(["ru"]);
+    for (const l of ["ru", "en", "auto", "de"]) expect(conversationLanguages(w(l, ["ru", "en"]))).toEqual(["ru"]);
+  });
+});
+
+describe("migration to 0.14.1", () => {
+  it("forces Russian and turns AI correction off for old settings", async () => {
+    localStorage.setItem(
+      "3uxo.settings",
+      JSON.stringify({ version: 2, whisper: { language: "auto", languages: ["ru", "en"] }, aiAuto: { correct: true } }),
+    );
+    const { getSettings, saveSettings } = await import("../settings");
+    const s = getSettings();
+    expect(s.whisper.language).toBe("ru");
+    expect(s.whisper.languages).toEqual(["ru"]);
+    expect(s.aiAuto.correct).toBe(false);
+    // Включённая после миграции — остаётся включённой.
+    saveSettings({ ...s, aiAuto: { ...s.aiAuto, correct: true } });
+    expect(getSettings().aiAuto.correct).toBe(true);
+    localStorage.clear();
   });
 });

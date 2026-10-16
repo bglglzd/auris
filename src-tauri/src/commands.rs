@@ -488,6 +488,9 @@ pub fn toggle_recording_state(state: &AppState) -> AppResult<bool> {
     }
 }
 
+/// Язык распознавания — всегда русский.
+const RU: &str = "ru";
+
 // Асинхронная: тяжёлая работа (загрузка модели + whisper) уходит с главного
 // потока, поэтому окно не зависает и можно ходить по другим встречам.
 // Прогресс шлём событием `transcribe-progress`.
@@ -496,7 +499,7 @@ pub async fn transcribe(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
     id: String,
-    options: TranscribeOptions,
+    mut options: TranscribeOptions,
     // Сколько голосов: для импорта — всего говорящих, для записи — число
     // собеседников на системной дорожке. None/0 — определить автоматически.
     speaker_count: Option<u32>,
@@ -508,6 +511,10 @@ pub async fn transcribe(
     // расшифровке), а не собеседников.
     total_voices: Option<bool>,
 ) -> AppResult<Transcript> {
+    // Распознавание только на русском (с v0.14.1): английского в разговоре
+    // не бывает, а Parakeet/Whisper иначе выдают английский перевод речи.
+    options.language = Some(RU.into());
+    options.languages = Some(vec![RU.into()]);
     let _ = &total_voices; // нужен только с фичей diarize
     // Импортированная встреча — одна дорожка audio.wav; записанная — mic+system.
     let imported = state.repo.lock().unwrap().get(&id)?.source == "imported";
@@ -854,6 +861,10 @@ struct QualityGuard {
     /// Языки разговора (пусто — без ограничений).
     allowed: Vec<String>,
     plan: std::cell::RefCell<Vec<uxo_core::refine::RefineWindow>>,
+    #[cfg_attr(not(feature = "whisper"), allow(dead_code))]
+    data_root: PathBuf,
+    #[cfg_attr(not(feature = "whisper"), allow(dead_code))]
+    vocab: uxo_core::vocab::Vocabulary,
 }
 
 #[cfg(feature = "parakeet")]
@@ -864,8 +875,7 @@ impl Asr for QualityGuard {
         progress: &dyn Fn(usize, usize),
     ) -> AppResult<Vec<uxo_core::transcript::Segment>> {
         use uxo_core::refine::{RefineKind, RefineWindow};
-        use uxo_core::rescue as rs;
-        let (segs, scores) = self.primary.transcribe_scored(wav, progress)?;
+        let (segs, _scores) = self.primary.transcribe_scored(wav, progress)?;
         let audio = uxo_core::enhance::read_wav_f32(wav)?;
         const SR: f64 = 16_000.0;
         let within = |a: f64, b: f64| -> Vec<uxo_core::transcript::Segment> {
@@ -878,36 +888,10 @@ impl Asr for QualityGuard {
                 .cloned()
                 .collect()
         };
-        let mut plan = Vec::new();
-        for w in &scores {
-            let (ia, ib) = ((w.start_secs * SR) as usize, ((w.end_secs * SR) as usize).min(audio.len()));
-            if ib <= ia {
-                continue;
-            }
-            let window = &audio[ia..ib];
-            let stats = rs::WindowStats {
-                start_secs: w.start_secs,
-                end_secs: w.end_secs,
-                snr_db: uxo_core::enhance::snr_db(window),
-                speech_secs: rs::speech_secs(window),
-                confidence: w.confidence,
-                tokens: w.tokens,
-            };
-            if rs::is_hard(&stats) {
-                plan.push(RefineWindow {
-                    start_secs: w.start_secs,
-                    end_secs: w.end_secs,
-                    kind: RefineKind::Hard,
-                    severity: rs::severity(&stats),
-                    speech_secs: stats.speech_secs,
-                    confidence: w.confidence,
-                    originals: within(w.start_secs, w.end_secs),
-                });
-            }
-        }
-        // Реплики не той письменности — вне уже отмеченных трудных окон.
-        // Разрешены оба языка разговора (русский и английский) — английская
-        // реплика не ошибка; разрешён один — письменность только его.
+        // С v0.14.1 трудные места после расшифровки не переписываются (ни в
+        // фоне, ни ИИ): результат — то, что распознал движок. Исправляется
+        // только язык — реплики не русской письменностью.
+        let mut plan: Vec<RefineWindow> = Vec::new();
         let lang = self.language.as_deref().map(str::trim).filter(|l| !l.is_empty());
         let scripts = uxo_core::langguard::allowed_scripts(&self.allowed);
         let target = match scripts.as_slice() {
@@ -936,12 +920,74 @@ impl Asr for QualityGuard {
                 });
             }
         }
-        self.plan.borrow_mut().extend(plan);
-        Ok(segs)
+        // Реплики не на русском (Parakeet иногда выдаёт английский перевод
+        // русской речи) перераспознаются сразу, Whisper с заданным языком —
+        // в расшифровку попадает уже русский текст, без фонового уточнения.
+        Ok(self.fix_language(segs, plan, &audio))
     }
 
     fn take_refine(&self) -> Vec<uxo_core::refine::RefineWindow> {
         std::mem::take(&mut *self.plan.borrow_mut())
+    }
+}
+
+#[cfg(feature = "parakeet")]
+impl QualityGuard {
+    #[cfg(feature = "whisper")]
+    fn fix_language(
+        &self,
+        mut segs: Vec<uxo_core::transcript::Segment>,
+        windows: Vec<uxo_core::refine::RefineWindow>,
+        audio: &[f32],
+    ) -> Vec<uxo_core::transcript::Segment> {
+        if windows.is_empty() {
+            return segs;
+        }
+        let lang = self.language.as_deref().map(str::trim).filter(|l| !l.is_empty() && *l != "auto");
+        let scripts = uxo_core::langguard::allowed_scripts(&self.allowed);
+        let whisper = match uxo_core::whisper::WhisperTranscriber::managed(&self.data_root, None, Some("auto".into()), &|_| {}) {
+            Ok(w) => w.with_prompt(self.vocab.prompt()).with_allowed_languages(self.allowed.clone()),
+            Err(e) => {
+                flog(&self.data_root, &format!("language fix: whisper unavailable: {e}"));
+                return segs;
+            }
+        };
+        let (mut fixed, mut rejected) = (0, 0);
+        for w in &windows {
+            let (ia, ib) = ((w.start_secs * 16_000.0) as usize, ((w.end_secs * 16_000.0) as usize).min(audio.len()));
+            if ib <= ia {
+                continue;
+            }
+            let Ok((alt, _)) = whisper.transcribe_fast(&audio[ia..ib], None, lang) else { continue };
+            if !uxo_core::langguard::fixes_language(&w.originals, &alt, &scripts) {
+                rejected += 1;
+                continue;
+            }
+            let fresh: Vec<_> = alt
+                .into_iter()
+                .map(|mut s| {
+                    s.start_secs = (s.start_secs + w.start_secs).min(w.end_secs);
+                    s.end_secs = (s.end_secs + w.start_secs).min(w.end_secs);
+                    s
+                })
+                .collect();
+            segs.retain(|s| !w.originals.contains(s));
+            segs.extend(fresh);
+            fixed += 1;
+        }
+        segs.sort_by(|a, b| a.start_secs.partial_cmp(&b.start_secs).unwrap_or(std::cmp::Ordering::Equal));
+        flog(&self.data_root, &format!("language fix: {} window(s), fixed {fixed}, rejected {rejected}", windows.len()));
+        segs
+    }
+
+    #[cfg(not(feature = "whisper"))]
+    fn fix_language(
+        &self,
+        segs: Vec<uxo_core::transcript::Segment>,
+        _windows: Vec<uxo_core::refine::RefineWindow>,
+        _audio: &[f32],
+    ) -> Vec<uxo_core::transcript::Segment> {
+        segs
     }
 }
 
@@ -1255,7 +1301,8 @@ pub async fn recognize_range(
     languages: Option<Vec<String>>,
 ) -> AppResult<Vec<uxo_core::transcript::Segment>> {
     let data_root = state.data_root.clone();
-    let allowed = uxo_core::langguard::allowed_languages(language.as_deref(), languages.as_deref().unwrap_or(&[]));
+    let _ = (language, languages);
+    let (language, allowed) = (Some(RU.to_string()), vec![RU.to_string()]);
     tauri::async_runtime::spawn_blocking(move || recognize_range_blocking(&data_root, &id, start, end, language, allowed))
         .await
         .map_err(|e| AppError::Audio(format!("recognize join: {e}")))?
@@ -1452,8 +1499,14 @@ fn load_engine(
             let parakeet = uxo_core::parakeet::ParakeetTranscriber::managed(data_root, on_download)?;
             // Трудные окна и реплики «не на том языке» — в план фонового
             // уточнения (QualityGuard → refine_transcript).
-            let _ = vocab;
-            return Ok(Box::new(QualityGuard { primary: parakeet, language, allowed, plan: Default::default() }));
+            return Ok(Box::new(QualityGuard {
+                primary: parakeet,
+                language,
+                allowed,
+                plan: Default::default(),
+                data_root: data_root.to_path_buf(),
+                vocab: vocab.clone(),
+            }));
         }
         #[cfg(not(feature = "parakeet"))]
         return Err(AppError::InvalidState(

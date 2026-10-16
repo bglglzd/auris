@@ -3,6 +3,12 @@
 All notable changes to Memiro AI. Versions follow [Semantic Versioning](https://semver.org/);
 installers for every version are on [GitHub Releases](https://github.com/bglglzd/auris/releases).
 
+## [0.14.1] — 2026-10-16
+
+### Changed
+- **Russian only.** Recognition is always in Russian: English phrases no longer appear in place of Russian speech. Phrases the engine still returned in Latin script are re-recognised in Russian right away, during transcription. The «Main language» and «Conversation languages» choices are replaced by a fixed «Russian»; terms (Jira, Zoom) are still written in Latin — add them to the vocabulary.
+- **The transcript stays as recognised.** Background refining of hard places after transcription no longer runs, and AI correction is off by default (also for those who had it on in 0.14.0). «✨» on the transcript still runs AI correction by hand; the switch in Settings → AI turns it back on.
+
 ## [0.14.0] — 2026-10-07
 
 ### Added
