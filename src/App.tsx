@@ -226,13 +226,9 @@ export default function App() {
           [id]: { running: false, percent: 100, doneToken: (t[id]?.doneToken ?? 0) + 1 },
         }));
         await refresh();
-        // Трудные места (шум, перебивания) уточняются в фоне — расшифровка
-        // уже готова и доступна.
-        // Затем — ИИ-корректура текста (если ИИ подключён и она включена).
-        void api
-          .refineTranscript(id)
-          .catch(() => {})
-          .then(() => runAutoCorrect(id));
+        // Текст остаётся таким, каким его распознал движок (фоновое
+        // уточнение не запускается). ИИ-корректура — только если её включили.
+        void runAutoCorrect(id);
         // ИИ сам придумывает заголовок и подводит итоги (если подключён).
         const m = await api.getMeeting(id).catch(() => null);
         if (m) {

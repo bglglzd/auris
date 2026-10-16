@@ -36,9 +36,9 @@ function whisperOptions(w: WhisperConfig) {
   return {
     whisperPath: w.whisperPath || undefined,
     model: w.model || undefined,
-    language: w.language || undefined,
+    language: "ru",
     vocabulary: [w.vocabulary, w.learned].map((v) => v?.trim()).filter(Boolean).join("\n") || undefined,
-    languages: conversationLanguages(w).length ? conversationLanguages(w) : undefined,
+    languages: conversationLanguages(w),
   };
 }
 

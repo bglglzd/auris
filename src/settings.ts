@@ -11,7 +11,8 @@ export const DEFAULT_MODEL = "parakeet-tdt-0.6b-v3";
 export const DEFAULT_WHISPER_MODEL = "large-v3-turbo-q8_0";
 
 /// Версия схемы настроек. 2 — v0.8: новая модель по умолчанию + aiAuto.
-const VERSION = 2;
+/// 3 — v0.14.1: только русский язык, ИИ-правка расшифровки выключена.
+const VERSION = 3;
 
 const DEFAULTS: AppSettings = {
   ai: { base_url: "", api_key: "", model: "" },
@@ -24,7 +25,7 @@ const DEFAULTS: AppSettings = {
     startDelaySecs: 5,
     minKeepSecs: 12,
   },
-  aiAuto: { title: true, summary: true, followModel: true, correct: true },
+  aiAuto: { title: true, summary: true, followModel: true, correct: false },
   notifications: !isMac,
   profanity: "censor",
 };
@@ -40,12 +41,19 @@ export function getSettings(): AppSettings {
       if ((parsed.version ?? 1) < 2 && (!whisper.model || whisper.model === "medium")) {
         whisper.model = DEFAULT_MODEL;
       }
+      // Распознавание — только на русском (английский был ошибкой движка).
+      whisper.language = "ru";
+      whisper.languages = ["ru"];
+      const aiAuto = { ...DEFAULTS.aiAuto, ...(parsed.aiAuto ?? {}) };
+      // v0.14.0 включала ИИ-правку по умолчанию — выключаем: текст остаётся
+      // таким, каким его распознал движок. Включить снова можно в настройках.
+      if ((parsed.version ?? 1) < 3) aiAuto.correct = false;
       return {
         ai: { ...DEFAULTS.ai, ...(parsed.ai ?? {}) },
         whisper,
         hotkey: typeof parsed.hotkey === "string" ? parsed.hotkey : DEFAULTS.hotkey,
         autoRecord: { ...DEFAULTS.autoRecord, ...(parsed.autoRecord ?? {}) },
-        aiAuto: { ...DEFAULTS.aiAuto, ...(parsed.aiAuto ?? {}) },
+        aiAuto,
         notifications:
           typeof parsed.notifications === "boolean" ? parsed.notifications : DEFAULTS.notifications,
         profanity: parsed.profanity === "verbatim" ? "verbatim" : "censor",
@@ -71,23 +79,10 @@ export function isAiConfigured(s: AppSettings): boolean {
   return !!(s.ai.base_url && s.ai.api_key);
 }
 
-/// Языки, которые можно отметить в «Языки разговора» (пока два).
-export const CONVERSATION_LANGUAGES: [string, string][] = [
-  ["ru", "Русский"],
-  ["en", "English"],
-];
-const CONV_CODES = CONVERSATION_LANGUAGES.map(([c]) => c);
-
-/// Языки разговора: отмеченные пользователем, а если не отмечены — по
-/// основному языку (русский → только русский; «определять автоматически» →
-/// русский и английский). Основной язык вне списка (немецкий и т. п.) — без
-/// ограничения (пусто).
-export function conversationLanguages(w: AppSettings["whisper"]): string[] {
-  const chosen = (w.languages ?? []).filter((l) => CONV_CODES.includes(l));
-  if (chosen.length) return chosen;
-  const main = w.language || "ru";
-  if (main === "auto") return [...CONV_CODES];
-  return CONV_CODES.includes(main) ? [main] : [];
+/// Языки разговора: с v0.14.1 — только русский (английский в расшифровке
+/// появлялся из-за ошибок движка, а не потому, что звучал).
+export function conversationLanguages(_w?: AppSettings["whisper"]): string[] {
+  return ["ru"];
 }
 
 /// Политика нецензурной лексики (по умолчанию — скрывать).

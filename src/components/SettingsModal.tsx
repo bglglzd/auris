@@ -7,7 +7,7 @@ import { AUTO_RECORD_APPS, customProcs, resolveProcesses } from "../autorecord";
 import { CopyLogButton } from "./CopyLogButton";
 import { HotkeyCapture } from "./HotkeyCapture";
 import { ModelsManager } from "./ModelsManager";
-import { CONVERSATION_LANGUAGES, conversationLanguages, DEFAULT_MODEL, isAiConfigured } from "../settings";
+import { DEFAULT_MODEL, isAiConfigured } from "../settings";
 import { findUpdate } from "../updater";
 import type { AiCheck } from "../types";
 import { isMac } from "../platform";
@@ -37,25 +37,6 @@ function Switch({
     </button>
   );
 }
-
-/// Языки речи для выбора в настройках (код Whisper → название).
-const SPEECH_LANGUAGES: [string, string][] = [
-  ["ru", "Русский"],
-  ["en", "English"],
-  ["uk", "Українська"],
-  ["be", "Беларуская"],
-  ["kk", "Қазақша"],
-  ["de", "Deutsch"],
-  ["fr", "Français"],
-  ["es", "Español"],
-  ["it", "Italiano"],
-  ["pt", "Português"],
-  ["pl", "Polski"],
-  ["tr", "Türkçe"],
-  ["zh", "中文"],
-  ["ja", "日本語"],
-  ["auto", "Определять автоматически"],
-];
 
 export function SettingsModal({ onClose }: { onClose: () => void }) {
   const [s, setS] = useState<AppSettings>(getSettings());
@@ -477,72 +458,16 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
               />
             </div>
             <div className="field">
-              <label htmlFor="asr-lang">Основной язык речи</label>
-              <select
-                id="asr-lang"
-                value={s.whisper.language || "ru"}
-                onChange={(e) => {
-                  const language = e.target.value;
-                  // Основной язык всегда среди языков разговора.
-                  const langs = s.whisper.languages;
-                  const languages =
-                    langs?.length && ["ru", "en"].includes(language) && !langs.includes(language)
-                      ? [...langs, language]
-                      : langs;
-                  setS({ ...s, whisper: { ...s.whisper, language, languages } });
-                }}
-              >
-                {SPEECH_LANGUAGES.map(([code, name]) => (
-                  <option key={code} value={code}>
-                    {name}
-                  </option>
-                ))}
-                {!SPEECH_LANGUAGES.some(([c]) => c === (s.whisper.language || "ru")) && (
-                  <option value={s.whisper.language}>{s.whisper.language}</option>
-                )}
-              </select>
+              <label>Язык речи</label>
+              <div className="voices-count lang-pick" role="group" aria-label="Язык речи">
+                <span className="seg-btn on">✓ Русский</span>
+              </div>
               <span className="hint">
-                Приоритетный язык: если фрагмент распознался на другом языке (латиница вместо русского),
-                Memiro перепроверит его на слух и оставит другой язык, только если он там действительно
-                звучит. «Определять автоматически» — для встреч на нескольких языках.
+                Memiro распознаёт речь только на русском: английские фразы на месте русской речи не
+                появляются. Термины и названия (Jira, Zoom) по-прежнему пишутся латиницей — добавьте их в
+                словарь.
               </span>
             </div>
-            {(["ru", "en", "auto"].includes(s.whisper.language || "ru")) && (
-              <div className="field">
-                <label id="asr-langs-label">Языки разговора</label>
-                <div className="voices-count lang-pick" role="group" aria-labelledby="asr-langs-label">
-                  {CONVERSATION_LANGUAGES.map(([code, name]) => {
-                    const chosen = conversationLanguages(s.whisper);
-                    const on = chosen.includes(code);
-                    return (
-                      <button
-                        key={code}
-                        type="button"
-                        role="checkbox"
-                        aria-checked={on}
-                        className={on ? "seg-btn on" : "seg-btn"}
-                        onClick={() => {
-                          const next = on ? chosen.filter((c) => c !== code) : [...chosen, code];
-                          if (next.length === 0) return; // хотя бы один язык
-                          const main = s.whisper.language || "ru";
-                          // Основной язык — из отмеченных.
-                          const language = main !== "auto" && !next.includes(main) ? next[0] : main;
-                          setS({ ...s, whisper: { ...s.whisper, languages: next, language } });
-                        }}
-                      >
-                        {on ? "✓ " : ""}
-                        {name}
-                      </button>
-                    );
-                  })}
-                </div>
-                <span className="hint">
-                  Memiro распознаёт речь только на отмеченных языках: русская фраза не превратится в
-                  английскую при уточнении трудных мест. Отметьте English, если в разговоре звучат целые
-                  английские фразы; отдельные термины (Jira, Zoom) и так пишутся латиницей.
-                </span>
-              </div>
-            )}
             <div className="field">
               <label htmlFor="asr-vocab">Словарь: термины, имена, команды</label>
               <textarea
@@ -700,12 +625,13 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
               <div>
                 <div className="row-switch-title">ИИ-правка расшифровки</div>
                 <div className="hint">
-                  После расшифровки ИИ исправит неверно услышанные слова, термины и пунктуацию по смыслу
+                  Выключено — текст остаётся таким, каким его распознал Memiro. Включите, чтобы после
+                  расшифровки ИИ исправлял неверно услышанные слова, термины и пунктуацию по смыслу
                   разговора. Уходит только текст; ваши правки не трогаются; можно вернуть как было.
                 </div>
               </div>
               <Switch
-                on={s.aiAuto.correct !== false}
+                on={s.aiAuto.correct === true}
                 onChange={(v) => setS({ ...s, aiAuto: { ...s.aiAuto, correct: v } })}
                 label="ИИ-правка расшифровки"
               />

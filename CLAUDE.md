@@ -174,6 +174,13 @@ e2e-тест `core/tests/diarize_e2e.rs` (`-- --ignored`, в CI на Windows).
 Фронт — `AudioEditor`/`WaveLane` + чистая логика `audioedit.ts`.
 
 ### Качество распознавания (v0.13)
+**С v0.14.1 — только русский и без автоуточнения**: `transcribe`/`recognize_range`
+принудительно ставят язык `ru` (`const RU`), фронт — `conversationLanguages` =
+`["ru"]`, миграция настроек v3. `QualityGuard` больше не планирует окна Hard
+(текст — как распознал движок, `refine_transcript` после расшифровки фронт не
+зовёт); реплики не кириллицей сразу перераспознаёт Whisper с `ru`
+(`QualityGuard::fix_language`, лог `language fix:`). ИИ-корректура по
+умолчанию выкл. (`aiAuto.correct`, кнопка ✨ — вручную). Ниже — как было.
 **С v0.13.4 всё уточнение — в фоне**: `QualityGuard` делает только первый проход
 и копит план (`refine.rs` → `<id>/refine.json`: окна Hard/Lang + исходные реплики);
 после расшифровки фронт зовёт `refine_transcript` (по месту: denoise+Parakeet →
