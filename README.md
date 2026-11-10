@@ -23,9 +23,6 @@
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
-<p align="center">
-  <img src="docs/screenshots/meeting-dark.png" width="860" alt="A meeting in Memiro: player, voices panel and transcript" />
-</p>
 
 ## Why Memiro AI
 
@@ -50,14 +47,6 @@ Most meeting tools upload your conversations to someone else's cloud. Memiro kee
 | ✂ **Audio editor** | Loudness timeline per track, cut unwanted parts, preview, apply to every track at once and keep the transcript in sync; one-click revert to the original. |
 | 🔄 **Updates** | Signed updates. Memiro checks for a new version, shows what's new, and installs and restarts only after you agree. |
 
-<p align="center">
-  <img src="docs/screenshots/ai-dark.png" width="420" alt="AI presets and reports" />
-  <img src="docs/screenshots/models-light.png" width="420" alt="Local models: download once, work offline" />
-</p>
-<p align="center">
-  <img src="docs/screenshots/export-dark.png" width="420" alt="Export to Word, Markdown, text or subtitles" />
-  <img src="docs/screenshots/meeting-light.png" width="420" alt="Light theme" />
-</p>
 
 ## Get started
 
