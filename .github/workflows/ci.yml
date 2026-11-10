@@ -30,6 +30,8 @@ jobs:
       - run: npm test
       - run: npx tsc --noEmit
       - run: npm run build
+      - run: node scripts/check-production-assets.mjs
+      - run: node --test tests/native/adapter.test.mjs
 
   core:
     runs-on: ubuntu-latest
@@ -72,10 +74,14 @@ jobs:
       # Через tauri CLI и с NSIS-установщиком — проверяет и хуки установщика
       # (миграция со старого имени). Без артефактов обновления: ключ только в релизе.
       - name: tauri build (app + NSIS installer, whisper + diarize + opus + parakeet)
-        run: >-
-          npm run tauri build -- --debug --bundles nsis
-          --features whisper,diarize,opus,parakeet
-          --config src-tauri/tauri.ci.conf.json
+        # A CI-only API-level WebView2 overlay survives elevated-runner hardening.
+        # Release workflows do not use this overlay or open a debugging port.
+        shell: pwsh
+        run: |
+          node scripts/prepare-native-acceptance.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run tauri build -- --debug --bundles nsis --features whisper,diarize,opus,parakeet --config target/native-acceptance-config.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Check installer
         shell: pwsh
         run: |
@@ -84,7 +90,8 @@ jobs:
           $exe.Name
           $manifest = @{
             source_sha = (git rev-parse HEAD)
-            configuration = 'Windows x64 debug; whisper,diarize,opus,parakeet; tauri.ci.conf.json; unsigned'
+            configuration = 'Windows x64 debug; whisper,diarize,opus,parakeet; CI-only isolated WebView2 loopback CDP and picker-path adapter; unsigned'
+            native_launch = (Get-Content -LiteralPath target/native-acceptance-launch.json -Raw | ConvertFrom-Json)
             rustc = (rustc --version)
             node = (node --version)
             package = $exe.Name
@@ -99,6 +106,22 @@ jobs:
           path: |
             target/debug/bundle/nsis/*-setup.exe
             target/debug/bundle/nsis/BUILD-MANIFEST.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Installed Windows native import, local ASR and export acceptance
+        timeout-minutes: 30
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -LiteralPath target/debug/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'Missing native test installer' }
+          node scripts/native-acceptance.mjs $installer.FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain native acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: memiro-windows-native-acceptance
+          path: native-acceptance-results/
           if-no-files-found: error
           retention-days: 7
 

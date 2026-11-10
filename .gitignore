@@ -3,5 +3,7 @@ node_modules
 dist
 .DS_Store
 *.wav
+!tests/fixtures/*.wav
+native-acceptance-results/
 *.bin
 src-tauri/macos/*.dylib
