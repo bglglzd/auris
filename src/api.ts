@@ -20,6 +20,9 @@ import type {
 } from "./types";
 import { logError, logInfo } from "./log";
 import { conversationLanguages, getSettings, isAiConfigured } from "./settings";
+import { applyFixes, applyFixesToTranscript, getFixes, setFixes, withMeetingTextWrite } from "./fixes";
+import type { Fix } from "./fixes";
+import { REPORT_ORDER } from "./reports";
 
 /// invoke с логированием ошибок в диагностику.
 async function inv<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -72,22 +75,52 @@ export const api = {
       whisper.engine === "server" && isAiConfigured(s)
         ? { base_url: s.ai.base_url, api_key: s.ai.api_key, model: whisper.serverModel?.trim() || "" }
         : undefined;
-    return inv("transcribe", {
-      id,
-      options: { ...whisperOptions(whisper), cloud },
-      speakerCount: speakerCount ?? null,
-      solo: solo ?? null,
-      totalVoices: totalVoices ?? null,
+    return withMeetingTextWrite(id, async () => {
+      const transcript = await inv<Transcript>("transcribe", {
+        id,
+        options: { ...whisperOptions(whisper), cloud },
+        speakerCount: speakerCount ?? null,
+        solo: solo ?? null,
+        totalVoices: totalVoices ?? null,
+      });
+      const fixed = applyFixesToTranscript(transcript, getFixes(id));
+      if (JSON.stringify(fixed) !== JSON.stringify(transcript)) {
+        await inv("save_transcript", { id, transcript: fixed });
+      }
+      return fixed;
     });
   },
   getTranscript: (id: string): Promise<Transcript | null> =>
     inv("get_transcript", { id }),
   /// Сохранить отредактированную расшифровку (правки whisper-ошибок/спикеров).
   saveTranscript: (id: string, transcript: Transcript): Promise<void> =>
-    inv("save_transcript", { id, transcript }),
-  /// Сохранить отредактированный ИИ-отчёт (brief|summary|analysis|literary).
+    withMeetingTextWrite(id, () => inv("save_transcript", { id, transcript })),
+  /// Сохранить отредактированный ИИ-отчёт любого поддерживаемого вида.
   saveReport: (id: string, kind: ReportKind, content: string): Promise<void> =>
-    inv("save_report", { id, kind, content }),
+    withMeetingTextWrite(id, () => inv("save_report", { id, kind, content })),
+  /// Явная замена в сохранённых текстах; читаем актуальные файлы под той же
+  /// очередью, что и генерация. При ошибке частичные сохранения видны в UI.
+  applyMeetingFixes: (id: string, fixes: Fix[], rules: Fix[]): Promise<number> =>
+    withMeetingTextWrite(id, async () => {
+      const transcript = await inv<Transcript | null>("get_transcript", { id });
+      const reports = await inv<Partial<Record<ReportKind, string>>>("get_reports", { id });
+      setFixes(id, rules);
+      let changed = 0;
+      if (transcript) {
+        const fixed = applyFixesToTranscript(transcript, fixes);
+        if (JSON.stringify(fixed) !== JSON.stringify(transcript)) {
+          await inv("save_transcript", { id, transcript: fixed });
+          changed++;
+        }
+      }
+      for (const kind of REPORT_ORDER) {
+        const content = reports[kind];
+        if (content === undefined) continue;
+        const fixed = applyFixes(content, fixes);
+        if (fixed !== content) { await inv("save_report", { id, kind, content: fixed }); changed++; }
+      }
+      return changed;
+    }),
 
   suggestMetadata: (id: string, config: AiConfig): Promise<MetadataSuggestion> =>
     inv("suggest_metadata", { id, config }),
@@ -120,9 +153,9 @@ export const api = {
     inv("update_meeting_notes", { id, notes }),
   /// ИИ-корректура расшифровки (только текст уходит на сервер ИИ).
   aiCorrectTranscript: (id: string, config: AiConfig, glossary?: string): Promise<{ changed: number; rejected: number }> =>
-    inv("ai_correct_transcript", { id, config, glossary: glossary || null }),
+    withMeetingTextWrite(id, () => inv("ai_correct_transcript", { id, config, glossary: glossary || null })),
   aiCorrectionAvailable: (id: string): Promise<boolean> => inv("ai_correction_available", { id }),
-  revertAiCorrection: (id: string): Promise<Transcript> => inv("revert_ai_correction", { id }),
+  revertAiCorrection: (id: string): Promise<Transcript> => withMeetingTextWrite(id, () => inv("revert_ai_correction", { id })),
   /// Умеет ли сервер ИИ распознавать речь.
   cloudAsrCheck: (config: AiConfig, model?: string): Promise<void> =>
     inv("cloud_asr_check", { config, model: model || null }),
@@ -157,11 +190,11 @@ export const api = {
   /// Вырезать интервалы из всех дорожек встречи (оригинал сохраняется).
   applyAudioEdit: (id: string, cuts: AudioRange[]): Promise<Meeting> => {
     logInfo(`audio edit id=${id} cuts=${cuts.length}`);
-    return inv("apply_audio_edit", { id, cuts });
+    return withMeetingTextWrite(id, () => inv("apply_audio_edit", { id, cuts }));
   },
   /// Вернуть аудио и расшифровку встречи к оригиналу из бэкапа.
   revertAudioEdit: (id: string): Promise<Meeting> =>
-    inv("revert_audio_edit", { id }),
+    withMeetingTextWrite(id, () => inv("revert_audio_edit", { id })),
 
   getBackendLog: (): Promise<string> => inv("get_backend_log"),
 
@@ -169,12 +202,12 @@ export const api = {
   /// Поменять число голосов в готовой расшифровке (мгновенно, без повторной
   /// расшифровки). null — определить автоматически.
   reclusterSpeakers: (id: string, speakerCount: number | null): Promise<Transcript> =>
-    inv("recluster_speakers", { id, speakerCount }),
+    withMeetingTextWrite(id, () => inv("recluster_speakers", { id, speakerCount })),
   /// Есть ли у встречи сохранённый анализ голосов.
   hasVoiceAnalysis: (id: string): Promise<boolean> =>
     inv("has_voice_analysis", { id }),
   /// Фоновое уточнение трудных мест (после расшифровки). Возвращает число улучшенных мест.
-  refineTranscript: (id: string): Promise<number> => inv("refine_transcript", { id }),
+  refineTranscript: (id: string): Promise<number> => withMeetingTextWrite(id, () => inv("refine_transcript", { id })),
   refineStatus: (id: string): Promise<{ pending: number; running: boolean }> => inv("refine_pending", { id }),
   cancelRefine: (id: string): Promise<void> => inv("cancel_refine", { id }),
   /// Распознать заново промежуток записи (пропуск в расшифровке).
@@ -207,7 +240,12 @@ export const api = {
     kind: ReportKind,
     config: AiConfig,
     context: MeetingContext,
-  ): Promise<string> => inv("generate_report", { id, kind, config, context }),
+  ): Promise<string> => withMeetingTextWrite(id, async () => {
+    const content = await inv<string>("generate_report", { id, kind, config, context });
+    const fixed = applyFixes(content, getFixes(id));
+    if (fixed !== content) await inv("save_report", { id, kind, content: fixed });
+    return fixed;
+  }),
   getReports: (id: string): Promise<Partial<Record<ReportKind, string>>> =>
     inv("get_reports", { id }),
   suggestMeta: (

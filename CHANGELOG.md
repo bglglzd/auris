@@ -11,6 +11,7 @@ installers for every version are on [GitHub Releases](https://github.com/bglglzd
 - Automatic stop rechecks the recording ID before stopping or discarding a clip. WAV assembly writes a temporary file before promoting the completed track; recovery preserves final audio instead of rebuilding it from leftover suffix parts.
 - Recovery rebuilds empty legacy finals from usable source parts, keeps uncertain source bytes for inspection, and retains audio shorter than a whole second. Only verified empty WAV-only folders are removed automatically.
 - Startup recovery preserves Audio Editor cuts, including a deliberately emptied track, when legacy capture parts remain. Original audio and the option to undo the edit stay available.
+- Rework the optional meeting-correction proposal: literal whole-word replacements cover the transcript, all six current report kinds and saved legacy briefs. Rules also apply to newly generated text; concurrent per-meeting writes are serialized and partial write errors remain visible.
 
 ## [0.14.1] — 2026-10-16
 

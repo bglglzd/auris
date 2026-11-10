@@ -24,6 +24,8 @@ import { AiPanel } from "./AiPanel";
 import { CopyLogButton } from "./CopyLogButton";
 import { openBugReport } from "../bugreport";
 import { CopyButton } from "./CopyButton";
+import { MeetingCorrections } from "./MeetingCorrections";
+import { MEETING_TEXT_EVENT } from "../fixes";
 
 interface Props {
   meeting: Meeting;
@@ -266,6 +268,17 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
     };
     window.addEventListener(REPORTS_EVENT, on);
     return () => window.removeEventListener(REPORTS_EVENT, on);
+  }, [meeting.id]);
+
+  useEffect(() => {
+    let alive = true;
+    const on = (event: Event) => {
+      if ((event as CustomEvent<{ id: string }>).detail?.id !== meeting.id) return;
+      api.getTranscript(meeting.id).then((value) => { if (alive) setTranscript(value); }).catch(() => {});
+      api.getReports(meeting.id).then((value) => { if (alive) setReports(value); }).catch(() => {});
+    };
+    window.addEventListener(MEETING_TEXT_EVENT, on);
+    return () => { alive = false; window.removeEventListener(MEETING_TEXT_EVENT, on); };
   }, [meeting.id]);
 
   // Ссылки на дорожки. `audioVersion` подмешивает метку версии в asset-URL:
@@ -1005,6 +1018,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
         )}
       </div>
 
+      {hasTranscript && <MeetingCorrections key={meeting.id} id={meeting.id} disabled={transcribing || editing || refine.running || aiFix.running} />}
       <AiPanel
         meeting={meeting}
         labels={labels}
