@@ -86,6 +86,8 @@ impl Repo {
     }
 
     pub fn insert(&self, m: &Meeting) -> AppResult<()> {
+        let duration_secs = i64::try_from(m.duration_secs)
+            .map_err(|_| AppError::InvalidInput("duration exceeds SQLite integer range".into()))?;
         self.conn.execute(
             "INSERT INTO meetings
                 (id, created_at, title, participants, topic, duration_secs, folder, status, source, notes, collection)
@@ -96,7 +98,7 @@ impl Repo {
                 m.title,
                 m.participants,
                 m.topic,
-                m.duration_secs,
+                duration_secs,
                 m.folder,
                 m.status,
                 m.source,
@@ -158,6 +160,8 @@ impl Repo {
     /// Обновляет длительность встречи (после правки аудио — вырезания
     /// фрагментов или возврата к оригиналу).
     pub fn update_duration(&self, id: &str, duration_secs: u64) -> AppResult<()> {
+        let duration_secs = i64::try_from(duration_secs)
+            .map_err(|_| AppError::InvalidInput("duration exceeds SQLite integer range".into()))?;
         let n = self.conn.execute(
             "UPDATE meetings SET duration_secs = ?1 WHERE id = ?2",
             params![duration_secs, id],
@@ -338,6 +342,23 @@ mod tests {
             repo.update_duration("nope", 1),
             Err(AppError::NotFound(_))
         ));
+    }
+
+    #[test]
+    fn duration_boundaries_roundtrip_without_wrapping_or_changing_existing_rows() {
+        let repo = Repo::open_in_memory().unwrap();
+        let mut meeting = sample("boundary", "2026-11-10T00:00:00Z");
+        meeting.duration_secs = i64::MAX as u64;
+        repo.insert(&meeting).unwrap();
+        assert_eq!(repo.get("boundary").unwrap().duration_secs, i64::MAX as u64);
+        assert!(matches!(repo.update_duration("boundary", u64::MAX), Err(AppError::InvalidInput(_))));
+        assert_eq!(repo.get("boundary").unwrap().duration_secs, i64::MAX as u64);
+        meeting.id = "overflow".into();
+        meeting.duration_secs = u64::MAX;
+        assert!(matches!(repo.insert(&meeting), Err(AppError::InvalidInput(_))));
+        assert_eq!(repo.list().unwrap().len(), 1);
+        repo.update_duration("boundary", 0).unwrap();
+        assert_eq!(repo.get("boundary").unwrap().duration_secs, 0);
     }
 
     #[test]

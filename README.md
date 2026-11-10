@@ -103,7 +103,7 @@ system audio┘                          └─ pyannote + WeSpeaker ──┘  
 
 ## Build from source
 
-Prerequisites: [Rust](https://rustup.rs) (stable), [Node.js](https://nodejs.org) 20+ and CMake, plus:
+Prerequisites: [Rust](https://rustup.rs) (stable), [Node.js](https://nodejs.org) 24 LTS and CMake, plus:
 
 - **Windows** — LLVM (libclang) and, for the GPU build, the Vulkan SDK.
 - **macOS 13+** — Xcode Command Line Tools. ONNX Runtime is loaded from a bundled dylib: fetch it once with `scripts/fetch-onnxruntime-macos.sh` (1.23.2, the last version built for both Intel and Apple Silicon).

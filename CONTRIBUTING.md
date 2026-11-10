@@ -21,9 +21,12 @@ npm run build
 cargo test -p uxo-core
 ```
 
-Running the full app needs Windows with Rust, Node.js 20+, CMake and LLVM
+Running the full app needs Windows with Rust, Node.js 24 LTS, CMake and LLVM
 (`npm run tauri dev -- --features whisper,diarize,opus,parakeet`). See the
 [README](README.md#build-from-source) for details.
+
+Run the checks in [DEPENDENCIES.md](DEPENDENCIES.md) when changing dependency
+locks. Native Tauri and JavaScript plugin versions must be updated together.
 
 ## Pull requests
 

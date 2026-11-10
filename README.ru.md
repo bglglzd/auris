@@ -103,7 +103,7 @@
 
 ## Сборка из исходников
 
-Нужны [Rust](https://rustup.rs) (stable), [Node.js](https://nodejs.org) 20+ и CMake, а также:
+Нужны [Rust](https://rustup.rs) (stable), [Node.js](https://nodejs.org) 24 LTS и CMake, а также:
 
 - **Windows** — LLVM (libclang), для GPU-сборки — Vulkan SDK.
 - **macOS 13+** — Xcode Command Line Tools. ONNX Runtime грузится из dylib в комплекте приложения: один раз скачайте её `scripts/fetch-onnxruntime-macos.sh` (1.23.2 — последняя версия и для Intel, и для Apple Silicon).
