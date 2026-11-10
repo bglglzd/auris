@@ -84,10 +84,21 @@ pub fn start_recording(
 /// паузе — без изменений.
 pub fn pause_recording(
     recorder: &dyn Recorder,
+    active: ActiveRecording,
+) -> AppResult<ActiveRecording> {
+    pause_recording_with_warning(recorder, active, |error| eprintln!("capture stop: {error}"))
+}
+
+/// Сохраняет завершённые сегменты даже при ошибке захвата; диагностику получает вызывающий.
+pub fn pause_recording_with_warning(
+    recorder: &dyn Recorder,
     mut active: ActiveRecording,
+    mut on_warning: impl FnMut(&AppError),
 ) -> AppResult<ActiveRecording> {
     if let Some(current) = active.current.take() {
-        recorder.stop()?;
+        if let Err(error) = recorder.stop() {
+            on_warning(&error);
+        }
         active.segments.push(current);
     }
     Ok(active)
@@ -115,10 +126,23 @@ pub fn stop_recording(
     active: &ActiveRecording,
     created_at: String,
 ) -> AppResult<Meeting> {
+    stop_recording_with_warning(recorder, repo, active, created_at, |error| eprintln!("capture stop: {error}"))
+}
+
+/// Ошибка завершённого потока не отменяет сохранение доступных дорожек.
+pub fn stop_recording_with_warning(
+    recorder: &dyn Recorder,
+    repo: &Repo,
+    active: &ActiveRecording,
+    created_at: String,
+    mut on_warning: impl FnMut(&AppError),
+) -> AppResult<Meeting> {
     let mut segments = active.segments.clone();
     // Если запись шла (не на паузе) — финализируем текущий сегмент.
     if let Some(current) = active.current.clone() {
-        recorder.stop()?;
+        if let Err(error) = recorder.stop() {
+            on_warning(&error);
+        }
         segments.push(current);
     }
 
@@ -179,19 +203,25 @@ pub fn recover_orphan_recordings(
             Err(_) => continue,
         };
         let (mic_parts, system_parts) = collect_segment_parts(&dir);
-        if mic_parts.is_empty() && system_parts.is_empty() {
-            continue; // нет осиротевших частей — встреча завершилась штатно
-        }
-
         let mic_final = dir.join("mic.wav");
         let system_final = dir.join("system.wav");
-        assemble_track(&mic_parts, &mic_final)?;
-        assemble_track(&system_parts, &system_final)?;
+        let already_known = repo.get(&id).is_ok();
+        if mic_parts.is_empty() && system_parts.is_empty()
+            && (already_known || (!mic_final.exists() && !system_final.exists())) {
+            continue;
+        }
+        // Запись могла упасть после переименования одной/обеих дорожек, но до
+        // вставки в БД. Не заменяем уже сохранённый звук пустым списком частей.
+        if !mic_parts.is_empty() || !mic_final.exists() {
+            assemble_track(&mic_parts, &mic_final)?;
+        }
+        if !system_parts.is_empty() || !system_final.exists() {
+            assemble_track(&system_parts, &system_final)?;
+        }
 
         let duration_secs = wav_duration_secs(&mic_final)
             .unwrap_or(0)
             .max(wav_duration_secs(&system_final).unwrap_or(0));
-        let already_known = repo.get(&id).is_ok();
         if duration_secs == 0 && !already_known {
             // Пустой огрызок (краш сразу после старта) — выкидываем целиком.
             let _ = std::fs::remove_dir_all(&dir);
@@ -796,6 +826,74 @@ mod tests {
         let repo = Repo::open_in_memory().unwrap();
         let rec = MockRecorder::new(2);
         (dir, repo, rec)
+    }
+
+    struct StopErrorRecorder(MockRecorder);
+
+    impl Recorder for StopErrorRecorder {
+        fn start(&self, mic: &Path, system: &Path) -> AppResult<()> {
+            self.0.start(mic, system)
+        }
+        fn stop(&self) -> AppResult<crate::recorder::RecordingResult> {
+            self.0.stop()?;
+            Err(AppError::Audio("synthetic capture stop failure".into()))
+        }
+        fn is_recording(&self) -> bool { self.0.is_recording() }
+    }
+
+    #[test]
+    fn capture_stop_error_preserves_pause_segments_and_saves_both_tracks_with_warning() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repo::open_in_memory().unwrap();
+        let rec = StopErrorRecorder(MockRecorder::new(2));
+        let mut warnings = Vec::new();
+        let active = start_recording(&rec, dir.path(), "stop-error".into()).unwrap();
+        let paused = pause_recording_with_warning(&rec, active, |e| warnings.push(e.to_string())).unwrap();
+        assert!(paused.current.is_none());
+        assert!(!rec.is_recording());
+        assert_eq!(paused.segments.len(), 1);
+        let resumed = resume_recording(&rec, paused).unwrap();
+        let meeting = stop_recording_with_warning(&rec, &repo, &resumed, "2026-11-10T00:00:00Z".into(), |e| warnings.push(e.to_string())).unwrap();
+        assert_eq!(warnings.len(), 2);
+        assert!(warnings.iter().all(|w| w.contains("synthetic capture stop failure")));
+        assert!(!rec.is_recording());
+        assert_eq!(meeting.duration_secs, 4);
+        assert_eq!(repo.get("stop-error").unwrap().duration_secs, 4);
+        for track in ["mic.wav", "system.wav"] {
+            assert_eq!(wav_duration_secs(&resumed.dir.join(track)).unwrap(), 4);
+        }
+    }
+
+    #[test]
+    fn startup_recovers_final_audio_after_database_insert_failure_without_rewriting_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("synthetic.db");
+        let repo = Repo::open(&db).unwrap();
+        let control = rusqlite::Connection::open(&db).unwrap();
+        control.execute_batch("CREATE TRIGGER synthetic_insert_failure BEFORE INSERT ON meetings BEGIN SELECT RAISE(FAIL, 'synthetic failure'); END;").unwrap();
+        let rec = MockRecorder::new(2);
+        let active = start_recording(&rec, dir.path(), "database-error".into()).unwrap();
+        assert!(stop_recording(&rec, &repo, &active, "2026-11-10T00:00:00Z".into()).is_err());
+        let original = std::fs::read(active.dir.join("mic.wav")).unwrap();
+        assert!(!original.is_empty());
+        control.execute_batch("DROP TRIGGER synthetic_insert_failure;").unwrap();
+        assert_eq!(recover_orphan_recordings(&repo, dir.path(), "2026-11-10T00:00:00Z".into()).unwrap(), 1);
+        assert_eq!(repo.get("database-error").unwrap().duration_secs, 2);
+        assert_eq!(std::fs::read(active.dir.join("mic.wav")).unwrap(), original);
+        assert_eq!(recover_orphan_recordings(&repo, dir.path(), "2026-11-10T00:00:00Z".into()).unwrap(), 0);
+    }
+
+    #[test]
+    fn recovery_keeps_completed_track_when_only_the_other_track_has_parts() {
+        let (dir, repo, rec) = setup();
+        let active = start_recording(&rec, dir.path(), "partial-rename".into()).unwrap();
+        rec.stop().unwrap();
+        let mic_part = &active.current.as_ref().unwrap().0;
+        let original = std::fs::read(mic_part).unwrap();
+        std::fs::rename(mic_part, active.dir.join("mic.wav")).unwrap();
+        assert_eq!(recover_orphan_recordings(&repo, dir.path(), "2026-11-10T00:00:00Z".into()).unwrap(), 1);
+        assert_eq!(std::fs::read(active.dir.join("mic.wav")).unwrap(), original);
+        assert_eq!(repo.get("partial-rename").unwrap().duration_secs, 2);
     }
 
     #[test]

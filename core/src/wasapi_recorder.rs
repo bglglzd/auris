@@ -109,17 +109,12 @@ impl Recorder for WasapiRecorder {
                 .ok_or_else(|| AppError::InvalidState("not recording".into()))?
         };
         running.stop.store(true, Ordering::Relaxed);
-        // Дожидаемся завершения потоков; ошибки внутри потока пробрасываем.
-        let mic_res = running
-            .mic
-            .join()
-            .map_err(|_| AppError::Audio("mic capture thread panicked".into()))?;
-        let sys_res = running
-            .system
-            .join()
-            .map_err(|_| AppError::Audio("system capture thread panicked".into()))?;
-        mic_res?;
-        sys_res?;
+        // Оба файла должны закрыться до склейки, даже если первый поток упал.
+        let joined = join_capture_threads(running.mic, running.system);
+        if let Err(ref error) = joined {
+            dlog(&running.mic_path, &format!("stop: {error}"));
+        }
+        joined?;
 
         let duration_secs = wav_duration_secs(&running.mic_path).unwrap_or(0);
         Ok(RecordingResult { duration_secs })
@@ -140,6 +135,48 @@ impl Recorder for WasapiRecorder {
             mic: mic_raw * 1000 / 32767,
             system: sys_raw * 1000 / 32767,
         }
+    }
+}
+
+fn join_capture_threads(
+    mic: std::thread::JoinHandle<AppResult<()>>,
+    system: std::thread::JoinHandle<AppResult<()>>,
+) -> AppResult<()> {
+    let mic_result = mic.join();
+    let system_result = system.join();
+    mic_result.map_err(|_| AppError::Audio("mic capture thread panicked".into()))??;
+    system_result.map_err(|_| AppError::Audio("system capture thread panicked".into()))??;
+    Ok(())
+}
+
+#[cfg(test)]
+mod join_tests {
+    use super::*;
+
+    #[test]
+    fn mic_panic_or_error_still_joins_the_system_worker() {
+        for panic in [false, true] {
+            let finished = Arc::new(AtomicBool::new(false));
+            let other = finished.clone();
+            let mic = std::thread::spawn(move || {
+                if panic { panic!("synthetic mic panic"); }
+                Err(AppError::Audio("synthetic mic error".into()))
+            });
+            let system = std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(20));
+                other.store(true, Ordering::SeqCst);
+                Ok(())
+            });
+            assert!(join_capture_threads(mic, system).is_err());
+            assert!(finished.load(Ordering::SeqCst));
+        }
+    }
+
+    #[test]
+    fn system_panic_is_reported_after_both_workers_exit() {
+        let mic = std::thread::spawn(|| Ok(()));
+        let system = std::thread::spawn(|| panic!("synthetic system panic"));
+        assert!(join_capture_threads(mic, system).is_err());
     }
 }
 

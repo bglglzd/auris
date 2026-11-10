@@ -3,6 +3,12 @@
 All notable changes to Memiro AI. Versions follow [Semantic Versioning](https://semver.org/);
 installers for every version are on [GitHub Releases](https://github.com/bglglzd/auris/releases).
 
+## Unreleased
+
+### Fixed
+- Recording stop waits for both capture workers even after a worker panic. Available tracks are saved with capture warnings retained, and startup recovery preserves finished audio when a database insert or track rename was interrupted.
+- Recording controls refresh after failed actions and show errors. A failed resume preserves the paused recording; a manual stop suppresses automatic restart until the call detector observes the call end. Automatic start cannot toggle an already-started manual recording off.
+
 ## [0.14.1] — 2026-10-16
 
 ### Changed

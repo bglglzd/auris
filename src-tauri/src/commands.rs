@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_notification::NotificationExt;
@@ -115,6 +116,7 @@ pub struct AppState {
     pub active: Mutex<Option<ActiveRecording>>,
     /// Настройки авто-записи; фоновый монитор опрашивает их и стартует/стопит.
     pub autorecord: Arc<Mutex<AutoRecordCfg>>,
+    pub manual_stop: AtomicBool,
 }
 
 /// Обновляет конфиг авто-записи (вызывается фронтом при загрузке и сохранении
@@ -138,16 +140,38 @@ pub fn set_autorecord(
 
 #[tauri::command]
 pub fn start_recording(app: AppHandle, state: tauri::State<AppState>) -> AppResult<String> {
+    let id = start_if_idle(&state, false)?
+        .ok_or_else(|| AppError::InvalidState("already recording".into()))?;
+    notify(&app, "🔴 Memiro — запись начата", "Идёт запись звонка");
+    report_recorder_warning(&app, &state);
+    Ok(id)
+}
+
+/// Проверка и старт атомарны относительно ручного управления записью.
+pub(crate) fn start_recording_if_idle(state: &AppState) -> AppResult<Option<String>> {
+    start_if_idle(state, true)
+}
+
+fn start_if_idle(state: &AppState, from_monitor: bool) -> AppResult<Option<String>> {
     let mut active = state.active.lock().unwrap();
     if active.is_some() {
-        return Err(AppError::InvalidState("already recording".into()));
+        return Ok(None);
+    }
+    if from_monitor {
+        let cfg = state.autorecord.lock().unwrap();
+        if !cfg.enabled || cfg.processes.is_empty() || state.manual_stop.load(Ordering::SeqCst) {
+            return Ok(None);
+        }
     }
     let id = uuid::Uuid::new_v4().to_string();
     let rec = service::start_recording(state.recorder.as_ref(), &state.data_root, id.clone())?;
     *active = Some(rec);
-    notify(&app, "🔴 Memiro — запись начата", "Идёт запись звонка");
-    report_recorder_warning(&app, &state);
-    Ok(id)
+    Ok(Some(id))
+}
+
+fn capture_warning<R: tauri::Runtime>(app: &tauri::AppHandle<R>, state: &AppState, error: &AppError) {
+    flog(&state.data_root, &format!("capture stop warning: {error}"));
+    let _ = app.emit("recording-capture-warning", error.to_string());
 }
 
 /// Если запись стартовала неполной (напр. на macOS без доступа к системному
@@ -302,6 +326,7 @@ pub async fn stop_recording(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> AppResult<Meeting> {
+    state.manual_stop.store(true, Ordering::SeqCst);
     // Берём активную запись и сразу отпускаем lock, чтобы не держать его
     // во время блокирующего I/O в recorder.stop() (важно для Плана 2).
     let current = {
@@ -313,7 +338,7 @@ pub async fn stop_recording(
     let created_at = chrono::Utc::now().to_rfc3339();
     let meeting = {
         let repo = state.repo.lock().unwrap();
-        service::stop_recording(state.recorder.as_ref(), &repo, &current, created_at)?
+        service::stop_recording_with_warning(state.recorder.as_ref(), &repo, &current, created_at, |error| capture_warning(&app, &state, error))?
     };
     // Диагностика захвата: размеры записанных дорожек. Пустой WAV (~44 байт
     // заголовка, ~0 с) означает, что WASAPI ничего не захватил — это укажет на
@@ -361,16 +386,13 @@ pub fn recording_levels(state: tauri::State<AppState>) -> uxo_core::recorder::Tr
 /// склеятся в один файл на стопе.
 #[tauri::command]
 pub fn pause_recording(app: AppHandle, state: tauri::State<AppState>) -> AppResult<()> {
-    let current = {
-        state
-            .active
-            .lock()
-            .unwrap()
+    let mut active = state.active.lock().unwrap();
+    let current = active
             .take()
-            .ok_or_else(|| AppError::InvalidState("not recording".into()))?
-    };
-    let updated = service::pause_recording(state.recorder.as_ref(), current)?;
-    *state.active.lock().unwrap() = Some(updated);
+            .ok_or_else(|| AppError::InvalidState("not recording".into()))?;
+    let updated = service::pause_recording_with_warning(state.recorder.as_ref(), current, |error| capture_warning(&app, &state, error))?;
+    *active = Some(updated);
+    drop(active);
     notify(&app, "⏸ Memiro — пауза", "Запись на паузе");
     Ok(())
 }
@@ -378,23 +400,26 @@ pub fn pause_recording(app: AppHandle, state: tauri::State<AppState>) -> AppResu
 /// Возобновляет запись после паузы (открывает следующий сегмент).
 #[tauri::command]
 pub fn resume_recording(app: AppHandle, state: tauri::State<AppState>) -> AppResult<()> {
-    let current = {
-        state
-            .active
-            .lock()
-            .unwrap()
+    let mut active = state.active.lock().unwrap();
+    let current = active
             .take()
-            .ok_or_else(|| AppError::InvalidState("not recording".into()))?
+            .ok_or_else(|| AppError::InvalidState("not recording".into()))?;
+    let updated = match service::resume_recording(state.recorder.as_ref(), current.clone()) {
+        Ok(updated) => updated,
+        Err(error) => {
+            *active = Some(current);
+            return Err(error);
+        }
     };
-    let updated = service::resume_recording(state.recorder.as_ref(), current)?;
-    *state.active.lock().unwrap() = Some(updated);
+    *active = Some(updated);
+    drop(active);
     notify(&app, "🔴 Memiro — запись продолжена", "Идёт запись");
     Ok(())
 }
 
 /// Останавливает активную запись и возвращает встречу (или `None`, если записи
 /// не было). Без уведомлений — для использования фоновым монитором авто-записи.
-pub(crate) fn stop_active_recording(state: &AppState) -> AppResult<Option<Meeting>> {
+pub(crate) fn stop_active_recording<R: tauri::Runtime>(app: &tauri::AppHandle<R>, state: &AppState) -> AppResult<Option<Meeting>> {
     let current = { state.active.lock().unwrap().take() };
     let current = match current {
         Some(c) => c,
@@ -402,7 +427,7 @@ pub(crate) fn stop_active_recording(state: &AppState) -> AppResult<Option<Meetin
     };
     let created_at = chrono::Utc::now().to_rfc3339();
     let repo = state.repo.lock().unwrap();
-    let meeting = service::stop_recording(state.recorder.as_ref(), &repo, &current, created_at)?;
+    let meeting = service::stop_recording_with_warning(state.recorder.as_ref(), &repo, &current, created_at, |error| capture_warning(app, state, error))?;
     Ok(Some(meeting))
 }
 
@@ -470,20 +495,19 @@ pub fn is_recording(state: tauri::State<AppState>) -> bool {
 
 /// Переключает запись (для горячей клавиши и трея). Возвращает `true`, если
 /// запись только что началась, `false` — если остановлена.
-pub fn toggle_recording_state(state: &AppState) -> AppResult<bool> {
+pub fn toggle_recording_state<R: tauri::Runtime>(app: &tauri::AppHandle<R>, state: &AppState) -> AppResult<bool> {
     let was_recording = state.active.lock().unwrap().is_some();
     if was_recording {
+        state.manual_stop.store(true, Ordering::SeqCst);
         let current = state.active.lock().unwrap().take();
         if let Some(current) = current {
             let created_at = chrono::Utc::now().to_rfc3339();
             let repo = state.repo.lock().unwrap();
-            service::stop_recording(state.recorder.as_ref(), &repo, &current, created_at)?;
+            service::stop_recording_with_warning(state.recorder.as_ref(), &repo, &current, created_at, |error| capture_warning(app, state, error))?;
         }
         Ok(false)
     } else {
-        let id = uuid::Uuid::new_v4().to_string();
-        let rec = service::start_recording(state.recorder.as_ref(), &state.data_root, id)?;
-        *state.active.lock().unwrap() = Some(rec);
+        start_if_idle(state, false)?;
         Ok(true)
     }
 }
