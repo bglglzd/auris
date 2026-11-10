@@ -199,8 +199,8 @@ try {
   if (app?.pid) {
     report.owned_app = { pid: app.pid, exit_code: app.exitCode, cdp_port: port };
     try {
-      const diagnostics = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "$all = @(Get-CimInstance Win32_Process); $ids = @([int]$env:MEMIRO_TEST_PID); for ($i = 0; $i -lt 6; $i++) { $ids += @($all | Where-Object { $_.ParentProcessId -in $ids } | Select-Object -ExpandProperty ProcessId) }; @($all | Where-Object { $_.ProcessId -in $ids } | ForEach-Object { @{ name=$_.Name; pid=$_.ProcessId; parent=$_.ParentProcessId; command=$_.CommandLine; version=if ($_.ExecutablePath) { (Get-Item -LiteralPath $_.ExecutablePath).VersionInfo.FileVersion } else { $null } }) | ConvertTo-Json -Depth 4"], {
-        windowsHide: true, encoding: "utf8", timeout: 15000, env: { ...process.env, MEMIRO_TEST_PID: String(app.pid) },
+      const diagnostics = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-File", path.resolve("scripts/native-owned-processes.ps1"), "-OwnedProcessId", String(app.pid), "-ExpectedExecutable", executable], {
+        windowsHide: true, encoding: "utf8", timeout: 15000, env: { ...process.env },
       });
       writeFileSync(path.join(output, "owned-processes.json"), diagnostics);
     } catch (error) { report.process_diagnostics_error = String(error); }
