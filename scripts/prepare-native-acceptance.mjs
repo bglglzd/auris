@@ -12,6 +12,7 @@ assert.equal(process.env.RUNNER_ENVIRONMENT, "github-hosted");
 assert.ok(process.env.RUNNER_TEMP && process.env.APPDATA && process.env.LOCALAPPDATA);
 assert.ok(!existsSync(path.join(process.env.APPDATA, "com.3uxo.app")), "Refuse an existing Memiro profile");
 const config = JSON.parse(readFileSync("src-tauri/tauri.ci.conf.json", "utf8"));
+config.build = { beforeBuildCommand: "npm run build -- --mode native-acceptance" };
 const normal = JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf8"));
 assert.equal(normal.app.windows.length, 1);
 const server = net.createServer();
@@ -35,6 +36,7 @@ writeFileSync("target/native-acceptance-config.json", bytes);
 writeFileSync("target/native-acceptance-launch.json", JSON.stringify({
   source_sha: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
   cdp_port: port, work_directory: work, webview_data_directory: profile, window_label: label,
+  dialog_adapter: "MEMIRO_NATIVE_ACCEPTANCE_DIALOG_ADAPTER",
   configuration_sha256: createHash("sha256").update(bytes).digest("hex"),
 }, null, 2));
 console.log("Prepared a fresh CI-only WebView2 profile and loopback CDP build overlay.");

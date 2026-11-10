@@ -17,8 +17,13 @@ and process/version diagnostics limited to the owned process tree.
 
 Playwright connects to the real WebView2 using its documented
 [CDP integration](https://playwright.dev/docs/webview2). The harness supplies
-controlled paths for OS open/save dialogs. Every other intercepted invocation
-continues to the actual Tauri backend; the renderer is the built application.
+controlled paths for OS open/save dialogs. The explicit `native-acceptance` Vite
+mode aliases the public core SDK import to `tests/native/tauri-core.js`, which
+re-exports the real SDK and wraps only `invoke`. It substitutes picker paths and
+forwards every other invocation to the real Tauri backend. It does not modify
+Tauri's immutable injected IPC methods. The harness asserts the adapter marker
+before clicking; production assets are checked to exclude it. The renderer is
+the built application with this CI-only file-picker boundary.
 
 The journey checks:
 

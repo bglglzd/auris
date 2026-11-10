@@ -32,6 +32,7 @@ const relative = path.relative(realpathSync(process.env.RUNNER_TEMP), work);
 assert.ok(relative && !relative.startsWith("..") && !path.isAbsolute(relative));
 assert.match(path.basename(work), /^memiro-native-/);
 assert.equal(launch.window_label, "main");
+assert.equal(launch.dialog_adapter, "MEMIRO_NATIVE_ACCEPTANCE_DIALOG_ADAPTER");
 assert.equal(launch.webview_data_directory, path.join(process.env.LOCALAPPDATA, launch.window_label, "MemiroNativeAcceptance", path.basename(work)));
 assert.ok(!existsSync(launch.webview_data_directory), "WebView2 profile must be fresh");
 const output = path.resolve("native-acceptance-results");
@@ -99,23 +100,8 @@ try {
   }
   assert.ok(page, "Actual Tauri page must be available");
   await page.getByRole("button", { name: "Импорт записи", exact: true }).waitFor();
-  await page.evaluate(() => {
-    const original = window.__TAURI_INTERNALS__.invoke.bind(window.__TAURI_INTERNALS__);
-    window.__nativeAcceptance = { dialogs: [], calls: {}, original };
-    window.__TAURI_INTERNALS__.invoke = async (command, args, options) => {
-      const state = window.__nativeAcceptance;
-      state.calls[command] = (state.calls[command] ?? 0) + 1;
-      if (command === "transcribe") {
-        state.recognition = { model: args.options.model, language: args.options.language, cloud: !!args.options.cloud };
-      }
-      if (command === "plugin:dialog|open" || command === "plugin:dialog|save") {
-        const next = state.dialogs.shift();
-        if (!next || next.command !== command) throw new Error("Unexpected OS file picker");
-        return next.value;
-      }
-      return original(command, args, options);
-    };
-  });
+  assert.equal(await page.evaluate(() => window.__nativeAcceptance?.marker), launch.dialog_adapter);
+  assert.equal(await page.evaluate(() => Object.getOwnPropertyDescriptor(window.__TAURI_INTERNALS__, "invoke").writable), false);
   const picker = (command, value) => page.evaluate((item) => window.__nativeAcceptance.dialogs.push(item), { command, value });
   const invoke = (command, args) => page.evaluate(({ command, args }) => window.__nativeAcceptance.original(command, args), { command, args });
   const importFile = async (file) => {
@@ -190,6 +176,7 @@ try {
 } catch (error) {
   report.passed = false;
   report.error = String(error.stack ?? error);
+  if (page) report.observed_commands = await page.evaluate(() => window.__nativeAcceptance?.calls ?? {}).catch(() => ({}));
   if (page) await page.screenshot({ path: path.join(output, "failure.png") }).catch(() => {});
   throw error;
 } finally {

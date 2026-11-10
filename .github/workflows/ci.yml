@@ -30,6 +30,8 @@ jobs:
       - run: npm test
       - run: npx tsc --noEmit
       - run: npm run build
+      - run: node scripts/check-production-assets.mjs
+      - run: node --test tests/native/adapter.test.mjs
 
   core:
     runs-on: ubuntu-latest
@@ -88,7 +90,7 @@ jobs:
           $exe.Name
           $manifest = @{
             source_sha = (git rev-parse HEAD)
-            configuration = 'Windows x64 debug; whisper,diarize,opus,parakeet; CI-only isolated WebView2 loopback CDP overlay; unsigned'
+            configuration = 'Windows x64 debug; whisper,diarize,opus,parakeet; CI-only isolated WebView2 loopback CDP and picker-path adapter; unsigned'
             native_launch = (Get-Content -LiteralPath target/native-acceptance-launch.json -Raw | ConvertFrom-Json)
             rustc = (rustc --version)
             node = (node --version)
