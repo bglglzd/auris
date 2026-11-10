@@ -39,10 +39,18 @@ fn segment_paths(dir: &Path, idx: usize) -> (PathBuf, PathBuf) {
 /// мгновенное переименование (без перекодирования); несколько — склейка
 /// [`concat_wavs`]. Пустой список — валидный WAV нулевой длины.
 fn assemble_track(parts: &[PathBuf], dst: &Path) -> AppResult<()> {
+    // A final file may already contain parts removed before an interrupted
+    // cleanup. Never replace it with the remaining suffix.
+    if dst.exists() {
+        return Ok(());
+    }
     if parts.len() == 1 && std::fs::rename(&parts[0], dst).is_ok() {
         return Ok(());
     }
-    concat_wavs(parts, dst)?;
+    let staged = dst.with_extension("assembling.wav");
+    concat_wavs(parts, &staged)?;
+    std::fs::OpenOptions::new().write(true).open(&staged)?.sync_all()?;
+    std::fs::rename(&staged, dst)?;
     for p in parts {
         let _ = std::fs::remove_file(p);
     }
@@ -206,16 +214,21 @@ pub fn recover_orphan_recordings(
         let mic_final = dir.join("mic.wav");
         let system_final = dir.join("system.wav");
         let already_known = repo.get(&id).is_ok();
+        if already_known && mic_final.exists() && system_final.exists() {
+            continue;
+        }
+        let retained_legacy_parts = (mic_final.exists() && !mic_parts.is_empty())
+            || (system_final.exists() && !system_parts.is_empty());
         if mic_parts.is_empty() && system_parts.is_empty()
             && (already_known || (!mic_final.exists() && !system_final.exists())) {
             continue;
         }
         // Запись могла упасть после переименования одной/обеих дорожек, но до
         // вставки в БД. Не заменяем уже сохранённый звук пустым списком частей.
-        if !mic_parts.is_empty() || !mic_final.exists() {
+        if !mic_final.exists() {
             assemble_track(&mic_parts, &mic_final)?;
         }
-        if !system_parts.is_empty() || !system_final.exists() {
+        if !system_final.exists() {
             assemble_track(&system_parts, &system_final)?;
         }
 
@@ -238,7 +251,11 @@ pub fn recover_orphan_recordings(
                 folder: id.clone(),
                 status: "recorded".into(),
                 source: "recorded".into(),
-                notes: String::new(),
+                notes: if retained_legacy_parts {
+                    "Восстановлены готовые дорожки. Оставшиеся исходные части сохранены в папке записи для проверки.".into()
+                } else {
+                    String::new()
+                },
                 collection: String::new(),
             };
             repo.insert(&meeting)?;
@@ -894,6 +911,29 @@ mod tests {
         assert_eq!(recover_orphan_recordings(&repo, dir.path(), "2026-11-10T00:00:00Z".into()).unwrap(), 1);
         assert_eq!(std::fs::read(active.dir.join("mic.wav")).unwrap(), original);
         assert_eq!(repo.get("partial-rename").unwrap().duration_secs, 2);
+    }
+
+    #[test]
+    fn recovery_never_replaces_complete_audio_with_leftover_suffix_parts() {
+        let (dir, repo, rec) = setup();
+        let active = start_recording(&rec, dir.path(), "suffix-parts".into()).unwrap();
+        let paused = pause_recording(&rec, active).unwrap();
+        let resumed = resume_recording(&rec, paused).unwrap();
+        rec.stop().unwrap();
+        let mut parts = resumed.segments.clone();
+        parts.push(resumed.current.clone().unwrap());
+        let mic_final = resumed.dir.join("mic.wav");
+        concat_wavs(&parts.iter().map(|p| p.0.clone()).collect::<Vec<_>>(), &mic_final).unwrap();
+        let complete = std::fs::read(&mic_final).unwrap();
+        // Emulate a previous version interrupted after writing the complete
+        // final file and deleting only the first source part.
+        std::fs::remove_file(&parts[0].0).unwrap();
+        assert_eq!(recover_orphan_recordings(&repo, dir.path(), "2026-11-10T00:00:00Z".into()).unwrap(), 1);
+        assert!(std::fs::read(&mic_final).unwrap() == complete, "complete WAV must remain byte-identical");
+        assert_eq!(wav_duration_secs(&mic_final).unwrap(), 4);
+        assert_eq!(repo.get("suffix-parts").unwrap().duration_secs, 4);
+        assert!(parts[1].0.exists(), "ambiguous legacy parts are preserved");
+        assert_eq!(recover_orphan_recordings(&repo, dir.path(), "2026-11-10T00:00:00Z".into()).unwrap(), 0);
     }
 
     #[test]

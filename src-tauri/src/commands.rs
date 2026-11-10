@@ -419,8 +419,17 @@ pub fn resume_recording(app: AppHandle, state: tauri::State<AppState>) -> AppRes
 
 /// Останавливает активную запись и возвращает встречу (или `None`, если записи
 /// не было). Без уведомлений — для использования фоновым монитором авто-записи.
-pub(crate) fn stop_active_recording<R: tauri::Runtime>(app: &tauri::AppHandle<R>, state: &AppState) -> AppResult<Option<Meeting>> {
-    let current = { state.active.lock().unwrap().take() };
+pub(crate) fn stop_active_recording<R: tauri::Runtime>(app: &tauri::AppHandle<R>, state: &AppState, expected_id: &str) -> AppResult<Option<Meeting>> {
+    let current = {
+        let mut active = state.active.lock().unwrap();
+        // The monitor's decision may be stale. Revalidate identity and manual
+        // control under the same lock used to take the recording.
+        if state.manual_stop.load(Ordering::SeqCst)
+            || active.as_ref().map(|recording| recording.id.as_str()) != Some(expected_id) {
+            return Ok(None);
+        }
+        active.take()
+    };
     let current = match current {
         Some(c) => c,
         None => return Ok(None),
