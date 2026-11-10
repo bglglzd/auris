@@ -69,6 +69,14 @@ fn should_assemble_track(parts: &[PathBuf], dst: &Path) -> bool {
     let Some(final_frames) = complete_pcm_frames(dst) else {
         return true;
     };
+    // The editor keeps the original before replacing a track, including a
+    // deliberate full-length cut. Retained capture parts must not undo it.
+    let edited_original = dst.with_file_name(orig_name(
+        dst.file_name().and_then(|name| name.to_str()).unwrap_or(""),
+    ));
+    if edited_original.exists() {
+        return false;
+    }
     let source_frames = part_frames(parts);
     if final_frames == 0 {
         return source_frames != Some(0);
@@ -1081,6 +1089,50 @@ mod tests {
         assert_eq!(recover_orphan_recordings(&repo, dir.path(), "2026-11-10T00:00:00Z".into()).unwrap(), 1);
         assert_eq!(complete_pcm_frames(&resumed.dir.join("system.wav")), Some(64_000));
         assert_eq!(complete_pcm_frames(&resumed.dir.join("system.recovery-original.wav")), Some(32_000));
+    }
+
+    #[test]
+    fn recovery_preserves_intentional_audio_edits_with_retained_legacy_parts() {
+        for cut_end in [2.0, 4.0] {
+            let (dir, repo, rec) = setup();
+            let active = start_recording(&rec, dir.path(), "edited-legacy".into()).unwrap();
+            let paused = pause_recording(&rec, active).unwrap();
+            let resumed = resume_recording(&rec, paused).unwrap();
+            rec.stop().unwrap();
+            let mut parts = resumed.segments.clone();
+            parts.push(resumed.current.clone().unwrap());
+            for (track, sources) in [
+                ("mic.wav", parts.iter().map(|p| p.0.clone()).collect::<Vec<_>>()),
+                ("system.wav", parts.iter().map(|p| p.1.clone()).collect::<Vec<_>>()),
+            ] {
+                concat_wavs(&sources, &resumed.dir.join(track)).unwrap();
+            }
+            let timestamp = "2026-11-10T00:00:00Z";
+            assert_eq!(recover_orphan_recordings(&repo, dir.path(), timestamp.into()).unwrap(), 1);
+            repo.update_notes("edited-legacy", "Synthetic user note").unwrap();
+            let duration = apply_audio_edit_files(dir.path(), "edited-legacy", &[Range::new(0.0, cut_end)]).unwrap();
+            repo.update_duration("edited-legacy", duration).unwrap();
+            let edited = std::fs::read(resumed.dir.join("system.wav")).unwrap();
+            for _ in 0..2 {
+                assert_eq!(recover_orphan_recordings(&repo, dir.path(), timestamp.into()).unwrap(), 0);
+                assert!(std::fs::read(resumed.dir.join("system.wav")).unwrap() == edited);
+                assert_eq!(repo.get("edited-legacy").unwrap().duration_secs, duration);
+                assert_eq!(repo.get("edited-legacy").unwrap().notes, "Synthetic user note");
+                assert!(resumed.dir.join("system.part0.wav").exists());
+                assert!(resumed.dir.join("system.orig.wav").exists());
+            }
+            if duration > 0 {
+                let missing_database = Repo::open_in_memory().unwrap();
+                assert_eq!(recover_orphan_recordings(&missing_database, dir.path(), timestamp.into()).unwrap(), 1);
+                assert_eq!(missing_database.get("edited-legacy").unwrap().duration_secs, duration);
+                assert!(std::fs::read(resumed.dir.join("system.wav")).unwrap() == edited);
+            }
+            let restored = revert_audio_edit_files(dir.path(), "edited-legacy").unwrap();
+            repo.update_duration("edited-legacy", restored).unwrap();
+            assert_eq!(restored, 4);
+            assert_eq!(recover_orphan_recordings(&repo, dir.path(), timestamp.into()).unwrap(), 0);
+            assert_eq!(repo.get("edited-legacy").unwrap().duration_secs, 4);
+        }
     }
 
     #[test]
