@@ -9,6 +9,7 @@ installers for every version are on [GitHub Releases](https://github.com/bglglzd
 - Recording stop waits for both capture workers even after a worker panic. Available tracks are saved with capture warnings retained, and startup recovery preserves finished audio when a database insert or track rename was interrupted.
 - Recording controls refresh after failed actions and show errors. A failed resume preserves the paused recording; a manual stop suppresses automatic restart until the call detector observes the call end. Automatic start cannot toggle an already-started manual recording off.
 - Automatic stop rechecks the recording ID before stopping or discarding a clip. WAV assembly writes a temporary file before promoting the completed track; recovery preserves final audio instead of rebuilding it from leftover suffix parts.
+- Recovery rebuilds empty legacy finals from usable source parts, keeps uncertain source bytes for inspection, and retains audio shorter than a whole second. Only verified empty WAV-only folders are removed automatically.
 
 ## [0.14.1] — 2026-10-16
 
