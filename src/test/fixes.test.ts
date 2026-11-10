@@ -39,7 +39,7 @@ describe("meeting corrections", () => {
     const reports = Object.fromEntries(REPORT_ORDER.map((kind) => [kind, `Термин ${kind}`]));
     call.mockImplementation(async (command) => command === "get_transcript" ? structuredClone(transcript) : command === "get_reports" ? reports : undefined);
     const fix = [{ from: "термин", to: "$&" }];
-    expect(await api.applyMeetingFixes("synthetic", fix, fix)).toBe(8);
+    expect(await api.applyMeetingFixes("synthetic", fix)).toBe(8);
     expect(call).toHaveBeenCalledWith("save_transcript", { id: "synthetic", transcript: { segments: [{ ...transcript.segments[0], text: "$&" }] } });
     for (const kind of REPORT_ORDER) expect(call).toHaveBeenCalledWith("save_report", { id: "synthetic", kind, content: `$& ${kind}` });
     expect(getFixes("synthetic")).toEqual(fix);
@@ -71,7 +71,7 @@ describe("meeting corrections", () => {
     });
     const generating = api.generateReport("synthetic", "tasks", { base_url: "", api_key: "", model: "" }, { title: "", participants: "", names: {} });
     const fix = [{ from: "термин", to: "Correct" }];
-    const fixing = api.applyMeetingFixes("synthetic", fix, fix);
+    const fixing = api.applyMeetingFixes("synthetic", fix);
     await Promise.resolve();
     expect(call.mock.calls.some(([command]) => command === "get_reports")).toBe(false);
     finish(); await generating; await fixing;
@@ -86,9 +86,56 @@ describe("meeting corrections", () => {
       if (command === "save_report") throw failure;
     });
     const fix = [{ from: "термин", to: "Correct" }];
-    await expect(api.applyMeetingFixes("synthetic", fix, fix)).rejects.toBe(failure);
+    await expect(api.applyMeetingFixes("synthetic", fix)).rejects.toBe(failure);
     expect(call.mock.calls.some(([command]) => command === "save_transcript")).toBe(true);
     expect(await withMeetingTextWrite("synthetic", async () => "usable")).toBe("usable");
     expect(await withMeetingTextWrite("other", async () => "independent")).toBe("independent");
+  });
+
+  it("merges unrelated stale-draft edits without undoing completed corrections", async () => {
+    const base = { segments: [transcript.segments[0], { ...transcript.segments[0], start_secs: 1, end_secs: 2, text: "Second" }] };
+    let stored = structuredClone(base);
+    call.mockImplementation(async (command, args) => {
+      if (command === "get_transcript") return structuredClone(stored);
+      if (command === "get_reports") return {};
+      if (command === "save_transcript") stored = structuredClone((args as { transcript: Transcript }).transcript);
+    });
+    await api.applyMeetingFixes("synthetic", [{ from: "Термин", to: "Correct" }]);
+    const edited = structuredClone(base); edited.segments[1].text = "Manual second edit";
+    const merged = await api.saveTranscriptEdits("synthetic", base, edited);
+    expect(merged.segments.map((segment) => segment.text)).toEqual(["Correct", "Manual second edit"]);
+    expect(stored).toEqual(merged);
+  });
+
+  it("rejects conflicting transcript/report edits without overwriting saved state", async () => {
+    const current = applyFixesToTranscript(transcript, [{ from: "Термин", to: "Correct" }]);
+    call.mockImplementation(async (command) => command === "get_transcript" ? current : command === "get_reports" ? { tasks: "Correct" } : undefined);
+    const edited = applyFixesToTranscript(transcript, [{ from: "Термин", to: "Conflicting" }]);
+    await expect(api.saveTranscriptEdits("synthetic", transcript, edited)).rejects.toThrow(/изменился/);
+    await expect(api.saveReportEdit("synthetic", "tasks", "Термин", "Conflicting")).rejects.toThrow(/изменился/);
+    expect(call.mock.calls.some(([command]) => command === "save_transcript" || command === "save_report")).toBe(false);
+    const structural = { segments: [...current.segments, { ...current.segments[0], start_secs: 2, end_secs: 3 }] };
+    call.mockResolvedValueOnce(structural);
+    await expect(api.saveTranscriptEdits("synthetic", transcript, edited)).rejects.toThrow(/изменился/);
+  });
+
+  it("retains both rule upserts queued from independent stale UI instances", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const first = withMeetingTextWrite("synthetic", () => gate);
+    call.mockImplementation(async (command) => command === "get_transcript" ? null : command === "get_reports" ? {} : undefined);
+    const one = api.applyMeetingFixes("synthetic", [{ from: "Alpha", to: "Beta" }]);
+    const two = api.applyMeetingFixes("synthetic", [{ from: "Gamma", to: "Delta" }]);
+    release(); await first; await one; await two;
+    expect(getFixes("synthetic")).toEqual([{ from: "Alpha", to: "Beta" }, { from: "Gamma", to: "Delta" }]);
+    await api.removeMeetingFix("synthetic", "ALPHA");
+    expect(getFixes("synthetic")).toEqual([{ from: "Gamma", to: "Delta" }]);
+  });
+
+  it("reapplies active rules after the supported AI post-transcription pass", async () => {
+    setFixes("synthetic", [{ from: "Термин", to: "Correct" }]);
+    call.mockImplementation(async (command) => command === "ai_correct_transcript" ? { changed: 1, rejected: 0 } : command === "get_transcript" ? structuredClone(transcript) : undefined);
+    expect(await api.aiCorrectTranscript("synthetic", { base_url: "", api_key: "", model: "" })).toEqual({ changed: 1, rejected: 0 });
+    expect(call).toHaveBeenCalledWith("save_transcript", { id: "synthetic", transcript: { segments: [{ ...transcript.segments[0], text: "Correct" }] } });
   });
 });

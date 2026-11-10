@@ -20,7 +20,7 @@ import type {
 } from "./types";
 import { logError, logInfo } from "./log";
 import { conversationLanguages, getSettings, isAiConfigured } from "./settings";
-import { applyFixes, applyFixesToTranscript, getFixes, setFixes, withMeetingTextWrite } from "./fixes";
+import { applyFixes, applyFixesToTranscript, getFixes, mergeFixes, mergeTranscriptEdits, setFixes, withMeetingTextWrite } from "./fixes";
 import type { Fix } from "./fixes";
 import { REPORT_ORDER } from "./reports";
 
@@ -32,6 +32,12 @@ async function inv<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
     logError(`invoke ${cmd}`, e);
     throw e;
   }
+}
+
+async function applyStoredTranscriptRules(id: string, transcript: Transcript): Promise<Transcript> {
+  const fixed = applyFixesToTranscript(transcript, getFixes(id));
+  if (JSON.stringify(fixed) !== JSON.stringify(transcript)) await inv("save_transcript", { id, transcript: fixed });
+  return fixed;
 }
 
 /// Пустые строки → undefined, чтобы на стороне Rust получился None.
@@ -83,11 +89,7 @@ export const api = {
         solo: solo ?? null,
         totalVoices: totalVoices ?? null,
       });
-      const fixed = applyFixesToTranscript(transcript, getFixes(id));
-      if (JSON.stringify(fixed) !== JSON.stringify(transcript)) {
-        await inv("save_transcript", { id, transcript: fixed });
-      }
-      return fixed;
+      return applyStoredTranscriptRules(id, transcript);
     });
   },
   getTranscript: (id: string): Promise<Transcript | null> =>
@@ -95,16 +97,30 @@ export const api = {
   /// Сохранить отредактированную расшифровку (правки whisper-ошибок/спикеров).
   saveTranscript: (id: string, transcript: Transcript): Promise<void> =>
     withMeetingTextWrite(id, () => inv("save_transcript", { id, transcript })),
+  saveTranscriptEdits: (id: string, base: Transcript, edited: Transcript): Promise<Transcript> =>
+    withMeetingTextWrite(id, async () => {
+      const current = await inv<Transcript | null>("get_transcript", { id });
+      if (!current) throw new Error("Расшифровка больше не существует. Черновик не сохранён.");
+      const merged = mergeTranscriptEdits(base, edited, current);
+      await inv("save_transcript", { id, transcript: merged });
+      return merged;
+    }),
   /// Сохранить отредактированный ИИ-отчёт любого поддерживаемого вида.
   saveReport: (id: string, kind: ReportKind, content: string): Promise<void> =>
     withMeetingTextWrite(id, () => inv("save_report", { id, kind, content })),
+  saveReportEdit: (id: string, kind: ReportKind, base: string, content: string): Promise<void> =>
+    withMeetingTextWrite(id, async () => {
+      const reports = await inv<Partial<Record<ReportKind, string>>>("get_reports", { id });
+      if (reports[kind] !== base && reports[kind] !== content) throw new Error("Отчёт изменился во время правки. Скопируйте черновик и откройте актуальный отчёт заново.");
+      await inv("save_report", { id, kind, content });
+    }),
   /// Явная замена в сохранённых текстах; читаем актуальные файлы под той же
   /// очередью, что и генерация. При ошибке частичные сохранения видны в UI.
-  applyMeetingFixes: (id: string, fixes: Fix[], rules: Fix[]): Promise<number> =>
+  applyMeetingFixes: (id: string, fixes: Fix[]): Promise<number> =>
     withMeetingTextWrite(id, async () => {
       const transcript = await inv<Transcript | null>("get_transcript", { id });
       const reports = await inv<Partial<Record<ReportKind, string>>>("get_reports", { id });
-      setFixes(id, rules);
+      setFixes(id, mergeFixes(getFixes(id), fixes));
       let changed = 0;
       if (transcript) {
         const fixed = applyFixesToTranscript(transcript, fixes);
@@ -120,6 +136,10 @@ export const api = {
         if (fixed !== content) { await inv("save_report", { id, kind, content: fixed }); changed++; }
       }
       return changed;
+    }),
+  removeMeetingFix: (id: string, from: string): Promise<void> =>
+    withMeetingTextWrite(id, async () => {
+      setFixes(id, getFixes(id).filter((fix) => fix.from.trim().toLowerCase() !== from.trim().toLowerCase()));
     }),
 
   suggestMetadata: (id: string, config: AiConfig): Promise<MetadataSuggestion> =>
@@ -153,7 +173,14 @@ export const api = {
     inv("update_meeting_notes", { id, notes }),
   /// ИИ-корректура расшифровки (только текст уходит на сервер ИИ).
   aiCorrectTranscript: (id: string, config: AiConfig, glossary?: string): Promise<{ changed: number; rejected: number }> =>
-    withMeetingTextWrite(id, () => inv("ai_correct_transcript", { id, config, glossary: glossary || null })),
+    withMeetingTextWrite(id, async () => {
+      const result = await inv<{ changed: number; rejected: number }>("ai_correct_transcript", { id, config, glossary: glossary || null });
+      if (getFixes(id).length) {
+        const transcript = await inv<Transcript | null>("get_transcript", { id });
+        if (transcript) await applyStoredTranscriptRules(id, transcript);
+      }
+      return result;
+    }),
   aiCorrectionAvailable: (id: string): Promise<boolean> => inv("ai_correction_available", { id }),
   revertAiCorrection: (id: string): Promise<Transcript> => withMeetingTextWrite(id, () => inv("revert_ai_correction", { id })),
   /// Умеет ли сервер ИИ распознавать речь.

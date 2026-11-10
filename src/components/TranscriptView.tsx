@@ -26,7 +26,7 @@ interface Props {
   onReassign?: (index: number, speaker: string | null, following: boolean) => void;
   /// Правка текста одной реплики прямо в ленте (пустой текст — удалить);
   /// `speaker` — выбранный говорящий для новой реплики.
-  onSaveText?: (index: number, text: string, speaker?: string) => void;
+  onSaveText?: (index: number, text: string, speaker?: string) => void | boolean | Promise<void | boolean>;
   /// Исходный (не цензурированный) текст реплики для правки.
   rawText?: (index: number) => string;
   /// Пропуски — паузы в тексте, где речь могла потеряться.
@@ -75,18 +75,31 @@ export function TranscriptView({
   // Правка одной реплики на месте: индекс и черновик текста.
   const [inlineAt, setInlineAt] = useState<number | null>(null);
   const [inlineText, setInlineText] = useState("");
+  const [savingInline, setSavingInline] = useState(false);
+  const [inlineError, setInlineError] = useState("");
+  const inlineSavePending = useRef(false);
   // Говорящий новой реплики (выбирается прямо в редакторе).
   const [inlineSpeaker, setInlineSpeaker] = useState<string | undefined>(undefined);
   const [busyGap, setBusyGap] = useState<number | null>(null);
   const openInline = (i: number, text: string) => {
+    if (inlineSavePending.current) return;
+    setInlineError("");
     setInlineAt(i);
     setInlineText(text);
     setInlineSpeaker(undefined);
   };
-  const commitInline = () => {
-    if (inlineAt === null) return;
-    onSaveText?.(inlineAt, inlineText, inlineSpeaker);
-    setInlineAt(null);
+  const commitInline = async () => {
+    if (inlineAt === null || inlineSavePending.current) return;
+    inlineSavePending.current = true;
+    setSavingInline(true);
+    setInlineError("");
+    try {
+      const saved = await onSaveText?.(inlineAt, inlineText, inlineSpeaker);
+      if (saved !== false) setInlineAt(null);
+      else setInlineError("Не удалось сохранить. Черновик оставлен на экране.");
+    } catch {
+      setInlineError("Не удалось сохранить. Черновик оставлен на экране.");
+    } finally { inlineSavePending.current = false; setSavingInline(false); }
   };
   // Запрос снаружи: открыть правку и показать реплику.
   const listRef = useRef<HTMLDivElement>(null);
@@ -105,6 +118,7 @@ export function TranscriptView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openRequest]);
   const cancelInline = () => {
+    if (inlineSavePending.current) return;
     // Новая (ещё пустая) реплика, которую передумали писать, — убрать.
     if (inlineAt !== null && !(rawText?.(inlineAt) ?? "").trim()) onSaveText?.(inlineAt, "");
     setInlineAt(null);
@@ -403,6 +417,7 @@ export function TranscriptView({
                     className="turn-edit"
                     autoFocus
                     value={inlineText}
+                    disabled={savingInline}
                     rows={Math.max(2, Math.ceil(inlineText.length / 60))}
                     placeholder={isNew ? "Впишите, что слышно в записи…" : "Что было сказано…"}
                     onChange={(e) => setInlineText(e.target.value)}
@@ -413,13 +428,14 @@ export function TranscriptView({
                   />
                   <div className="turn-inline-actions">
                     <span className="hint">Ctrl/⌘+Enter — сохранить, Esc — отмена. Пустой текст удалит реплику.</span>
-                    <button type="button" className="btn ghost btn-sm" onClick={cancelInline}>
+                    <button type="button" className="btn ghost btn-sm" onClick={cancelInline} disabled={savingInline}>
                       Отмена
                     </button>
-                    <button type="button" className="btn primary btn-sm" onClick={commitInline}>
+                    <button type="button" className="btn primary btn-sm" onClick={commitInline} disabled={savingInline}>
                       Сохранить
                     </button>
                   </div>
+                  {inlineError && <p className="ai-error" role="alert">{inlineError}</p>}
                 </div>
               ) : (
                 <>

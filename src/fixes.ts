@@ -17,6 +17,29 @@ export function setFixes(id: string, fixes: Fix[]): void {
   localStorage.setItem(keyFor(id), JSON.stringify(fixes));
 }
 
+export function mergeFixes(current: Fix[], changes: Fix[]): Fix[] {
+  return changes.reduce((rules, fix) => [
+    ...rules.filter((item) => item.from.trim().toLowerCase() !== fix.from.trim().toLowerCase()),
+    fix,
+  ], current);
+}
+
+export function mergeTranscriptEdits(base: Transcript, edited: Transcript, current: Transcript): Transcript {
+  if (JSON.stringify(current) === JSON.stringify(base)) return edited;
+  const conflict = () => new Error("Текст изменился во время правки. Черновик сохранён на экране; скопируйте правки и откройте актуальный текст заново.");
+  if (base.segments.length !== current.segments.length || base.segments.length !== edited.segments.length) throw conflict();
+  return { ...current, segments: base.segments.map((before, index) => {
+    const next = edited.segments[index], latest = current.segments[index];
+    if (before.start_secs !== latest.start_secs || before.end_secs !== latest.end_secs) throw conflict();
+    const field = <K extends keyof typeof before>(key: K): typeof before[K] => {
+      if (next[key] === before[key]) return latest[key];
+      if (latest[key] !== before[key] && latest[key] !== next[key]) throw conflict();
+      return next[key];
+    };
+    return { ...latest, text: field("text"), speaker: field("speaker"), origin: field("origin"), start_secs: field("start_secs"), end_secs: field("end_secs") };
+  }) };
+}
+
 export function applyFixes(text: string, fixes: Fix[]): string {
   return fixes.reduce((out, { from, to }) => {
     const needle = from.trim();

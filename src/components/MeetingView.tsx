@@ -87,6 +87,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
     return () => window.removeEventListener(SETTINGS_EVENT, on);
   }, []);
   const [draft, setDraft] = useState<Transcript | null>(null);
+  const draftBase = useRef<Transcript | null>(null);
 
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
@@ -434,6 +435,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
   // ---- Правка расшифровки ----
   const startEdit = () => {
     if (!transcript) return;
+    draftBase.current = transcript;
     setDraft({ segments: transcript.segments.map((s) => ({ ...s })) });
     setEditing(true);
   };
@@ -456,23 +458,26 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
   // ---- Правка прямо в ленте: текст реплики, пропуски ----
   const gaps = useMemo(() => (transcript ? findGaps(transcript, 3, duration) : []), [transcript, duration]);
   const persist = async (t: Transcript) => {
+    if (!transcript) return false;
     try {
-      await api.saveTranscript(meeting.id, t);
-      setTranscript(t);
+      const stored = await api.saveTranscriptEdits(meeting.id, transcript, t);
+      setTranscript(stored);
+      return true;
     } catch (e) {
       setError(String(e));
+      return false;
     }
   };
   // Почему не распозналась дописанная реплика: начало реплики → причина.
   const [why, setWhy] = useState<Record<string, string>>({});
   // Открыть правку новой реплики (кнопка в плеере).
   const [openRequest, setOpenRequest] = useState<{ index: number; nonce: number } | null>(null);
-  const saveText = (i: number, text: string, speaker?: string) => {
-    if (!transcript) return;
+  const saveText = async (i: number, text: string, speaker?: string) => {
+    if (!transcript) return false;
     const before = transcript.segments[i];
     const t = setSegmentText(transcript, i, text, speaker);
-    void persist(t);
-    if (!before || !text.trim() || before.text.trim() === text.trim()) return;
+    if (!await persist(t)) return false;
+    if (!before || !text.trim() || before.text.trim() === text.trim()) return true;
     const added = before.origin === "user" && !before.text.trim();
     // Учимся на правке: термины и замены «как распознано → как правильно»
     // идут в словарь следующих расшифровок.
@@ -496,6 +501,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
         if (d) setWhy((w) => ({ ...w, [before.start_secs.toFixed(2)]: d.text }));
       })
       .catch(() => {});
+    return true;
   };
   const whyMissed = (i: number) => {
     const s = transcript?.segments[i];
@@ -561,14 +567,14 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
   const deleteSegment = (i: number) =>
     setDraft((d) => (d ? { segments: d.segments.filter((_, j) => j !== i) } : d));
   const saveEdit = async () => {
-    if (!draft) return;
+    if (!draft || !draftBase.current) return;
     // Пустые после правки реплики убираем (очистка текста = удалить строку).
     const cleaned: Transcript = {
       segments: draft.segments.filter((s) => s.text.trim().length > 0),
     };
     try {
-      await api.saveTranscript(meeting.id, cleaned);
-      setTranscript(cleaned);
+      const stored = await api.saveTranscriptEdits(meeting.id, draftBase.current, cleaned);
+      setTranscript(stored);
       setEditing(false);
       setDraft(null);
     } catch (e) {
