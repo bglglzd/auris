@@ -20,12 +20,13 @@ jobs:
   frontend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
       - run: npm ci
+      - run: npm audit --audit-level=low
       - run: npm test
       - run: npx tsc --noEmit
       - run: npm run build
@@ -33,10 +34,14 @@ jobs:
   core:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       # Ядро без GUI и тяжёлых фич: модель, хранилище, аудио, расшифровка, ИИ.
+      - name: Audit locked dependencies
+        run: |
+          cargo install cargo-audit --locked --version 0.22.2
+          cargo audit --file Cargo.lock
       - name: Core tests
         run: cargo test -p uxo-core
 
@@ -46,15 +51,15 @@ jobs:
   check-app:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
       - run: npm ci
       - run: npm run build
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       # Whisper.cpp (whisper-rs) собирается через bindgen — нужен libclang.
       - name: Install LLVM (libclang for whisper-rs)
         run: choco install llvm -y --no-progress
@@ -77,15 +82,34 @@ jobs:
           $exe = Get-ChildItem -Recurse target/debug/bundle/nsis -Filter "*-setup.exe" | Select-Object -First 1
           if (-not $exe) { throw "NSIS installer not found" }
           $exe.Name
+          $manifest = @{
+            source_sha = (git rev-parse HEAD)
+            configuration = 'Windows x64 debug; whisper,diarize,opus,parakeet; tauri.ci.conf.json; unsigned'
+            rustc = (rustc --version)
+            node = (node --version)
+            package = $exe.Name
+            sha256 = (Get-FileHash -LiteralPath $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            validation = 'Build and linkage only; core native ASR is tested in the separate ONNX job.'
+          }
+          $manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $exe.DirectoryName 'BUILD-MANIFEST.json') -Encoding utf8
+      - name: Retain unsigned test installer
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: memiro-windows-x64-ci
+          path: |
+            target/debug/bundle/nsis/*-setup.exe
+            target/debug/bundle/nsis/BUILD-MANIFEST.json
+          if-no-files-found: error
+          retention-days: 7
 
   # Диаризация на Windows по-настоящему: ONNX Runtime + модели + эталонная
   # запись pyannote (2 голоса). Проверяет рантайм там, где живут пользователи.
   onnx-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: ONNX tests (unit + e2e on real models)
         run: |
           cargo test -p uxo-core --features diarize,parakeet
@@ -109,14 +133,14 @@ jobs:
     name: macos (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
       - run: npm ci
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       # screencapturekit → apple-metal собирает Swift-мост под SDK macOS 26
       # (MTLTensor и др.): нужен самый свежий Xcode на раннере. Минимальная
       # версия приложения (macOS 13) от SDK не зависит.
