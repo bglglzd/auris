@@ -80,7 +80,7 @@ it("rejects an inline draft whose original text changed after editing opened", a
   expect(screen.getByDisplayValue("Manual conflicting")).toBeTruthy();
 });
 
-it("preserves saved phrases when a correction refresh removes an unsaved insertion", async () => {
+it.each(["middle", "end"])("preserves saved phrases and a recoverable %s insertion draft after refresh", async (position) => {
   const id = "insert-during-refresh";
   let transcript = { segments: [segment("Alpha"), segment("Other", 2)] };
   let saves = 0;
@@ -94,7 +94,8 @@ it("preserves saved phrases when a correction refresh removes an unsaved inserti
   });
   render(<MeetingView meeting={meeting(id)} onTranscribe={vi.fn()} onMetaSaved={vi.fn()} />);
   await screen.findByRole("button", { name: "Редактировать расшифровку" });
-  await userEvent.click(screen.getAllByRole("button", { name: "Добавить реплику после этой" })[0]);
+  const insertionIndex = position === "middle" ? 0 : 1;
+  await userEvent.click(screen.getAllByRole("button", { name: "Добавить реплику после этой" })[insertionIndex]);
   await userEvent.type(screen.getByPlaceholderText("Впишите, что слышно в записи…"), "New manual phrase");
   await userEvent.click(screen.getByText("Сквозные исправления"));
   await userEvent.type(screen.getByRole("textbox", { name: "Как написано" }), "Alpha");
@@ -102,16 +103,20 @@ it("preserves saved phrases when a correction refresh removes an unsaved inserti
   await userEvent.click(screen.getByRole("button", { name: "Исправить везде" }));
   await screen.findByRole("status");
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
-  await userEvent.click(screen.getByRole("button", { name: "Сохранить" }));
-  await screen.findByRole("alert");
+  if (position === "middle") {
+    await userEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+    await screen.findByRole("alert");
+  } else {
+    expect(await screen.findByRole("textbox", { name: "Несохранённая реплика" })).toHaveValue("New manual phrase");
+  }
   expect(transcript.segments.map(item => item.text)).toEqual(["Correct", "Other"]);
   expect(saves).toBe(1);
   expect(screen.getByDisplayValue("New manual phrase")).toBeTruthy();
-  await userEvent.click(screen.getByRole("button", { name: "Отмена" }));
-  await userEvent.click(screen.getAllByRole("button", { name: "Добавить реплику после этой" })[0]);
+  await userEvent.click(screen.getByRole("button", { name: position === "middle" ? "Отмена" : "Закрыть черновик" }));
+  await userEvent.click(screen.getAllByRole("button", { name: "Добавить реплику после этой" })[insertionIndex]);
   await userEvent.type(screen.getByPlaceholderText("Впишите, что слышно в записи…"), "New manual phrase");
   await userEvent.click(screen.getByRole("button", { name: "Сохранить" }));
-  await waitFor(() => expect(transcript.segments.map(item => item.text)).toEqual(["Correct", "New manual phrase", "Other"]));
+  await waitFor(() => expect(transcript.segments.map(item => item.text)).toEqual(position === "middle" ? ["Correct", "New manual phrase", "Other"] : ["Correct", "Other", "New manual phrase"]));
   expect(saves).toBe(2);
 });
 

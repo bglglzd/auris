@@ -244,12 +244,21 @@ export function TranscriptView({
   // Id для «Новый голос» в новой реплике.
   const newVoiceId = useMemo(() => (transcript ? newSpeakerId(transcript) : null), [transcript]);
 
+  const draftRecovery = inlineAt !== null && !transcript?.segments[inlineAt] ? (
+    <div className="turn-inline" role="alert">
+      <p>Расшифровка обновилась. Эта реплика ещё не сохранена — скопируйте её и добавьте заново.</p>
+      <textarea aria-label="Несохранённая реплика" value={inlineText} readOnly rows={3} />
+      <button type="button" className="btn ghost" onClick={() => setInlineAt(null)}>Закрыть черновик</button>
+    </div>
+  ) : null;
+
   if (!transcript || transcript.segments.length === 0) {
-    return <div className="transcript-empty">Расшифровки пока нет.</div>;
+    return <>{draftRecovery}<div className="transcript-empty">Расшифровки пока нет.</div></>;
   }
 
   return (
     <div ref={listRef} className={editing ? "transcript editing" : "transcript"}>
+      {draftRecovery}
       {!editing && gaps.filter((g) => g.after === -1).map(gapRow)}
       {transcript.segments.map((seg, i) => {
         const active = i === activeIndex;
