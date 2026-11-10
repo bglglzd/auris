@@ -6,6 +6,15 @@ runner, `scripts/native-acceptance.mjs` verifies the build manifest and installe
 digest, installs into a new temporary directory, and starts the installed app.
 It refuses to run on a user machine or over an existing Memiro data folder.
 
+`prepare-native-acceptance.mjs` creates a CI-only build overlay with a fresh
+WebView2 data directory and explicit loopback CDP arguments. WebView2 150 and
+newer [ignore environment overrides in elevated hosts](https://github.com/MicrosoftEdge/WebView2Feedback/issues/5645),
+so the overlay passes these options through Tauri's API configuration. It keeps
+the normal window settings and Wry defaults. Release workflows do not use it.
+The generated launch metadata and configuration digest are bound to the build
+manifest. Startup failures retain owned-child output, backend logs when present,
+and process/version diagnostics limited to the owned process tree.
+
 Playwright connects to the real WebView2 using its documented
 [CDP integration](https://playwright.dev/docs/webview2). The harness supplies
 controlled paths for OS open/save dialogs. Every other intercepted invocation

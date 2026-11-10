@@ -72,10 +72,14 @@ jobs:
       # Через tauri CLI и с NSIS-установщиком — проверяет и хуки установщика
       # (миграция со старого имени). Без артефактов обновления: ключ только в релизе.
       - name: tauri build (app + NSIS installer, whisper + diarize + opus + parakeet)
-        run: >-
-          npm run tauri build -- --debug --bundles nsis
-          --features whisper,diarize,opus,parakeet
-          --config src-tauri/tauri.ci.conf.json
+        # A CI-only API-level WebView2 overlay survives elevated-runner hardening.
+        # Release workflows do not use this overlay or open a debugging port.
+        shell: pwsh
+        run: |
+          node scripts/prepare-native-acceptance.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run tauri build -- --debug --bundles nsis --features whisper,diarize,opus,parakeet --config target/native-acceptance-config.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Check installer
         shell: pwsh
         run: |
@@ -84,7 +88,8 @@ jobs:
           $exe.Name
           $manifest = @{
             source_sha = (git rev-parse HEAD)
-            configuration = 'Windows x64 debug; whisper,diarize,opus,parakeet; tauri.ci.conf.json; unsigned'
+            configuration = 'Windows x64 debug; whisper,diarize,opus,parakeet; CI-only isolated WebView2 loopback CDP overlay; unsigned'
+            native_launch = (Get-Content -LiteralPath target/native-acceptance-launch.json -Raw | ConvertFrom-Json)
             rustc = (rustc --version)
             node = (node --version)
             package = $exe.Name

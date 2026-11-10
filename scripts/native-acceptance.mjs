@@ -2,9 +2,9 @@
 // Only OS file-picker results are supplied by the harness. No audio capture.
 // CDP setup: https://playwright.dev/docs/webview2
 import assert from "node:assert/strict";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -13,7 +13,7 @@ import { chromium } from "playwright-core";
 assert.equal(process.platform, "win32");
 assert.equal(process.env.GITHUB_ACTIONS, "true", "Use a disposable CI runner only");
 assert.equal(process.env.RUNNER_ENVIRONMENT, "github-hosted");
-assert.ok(process.env.RUNNER_TEMP && process.env.APPDATA);
+assert.ok(process.env.RUNNER_TEMP && process.env.APPDATA && process.env.LOCALAPPDATA);
 const appData = path.join(process.env.APPDATA, "com.3uxo.app");
 assert.ok(!existsSync(appData), "Refuse to open a pre-existing Memiro profile");
 const installer = path.resolve(process.argv[2] ?? "");
@@ -23,7 +23,17 @@ const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 assert.equal(sha256(readFileSync(installer)), manifest.sha256);
 const sourceSha = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 assert.equal(manifest.source_sha, sourceSha);
-const work = path.join(process.env.RUNNER_TEMP, `memiro-native-${randomUUID()}`);
+const launch = JSON.parse(readFileSync("target/native-acceptance-launch.json", "utf8"));
+assert.equal(launch.source_sha, sourceSha);
+assert.deepEqual(manifest.native_launch, launch);
+assert.equal(launch.configuration_sha256, sha256(readFileSync("target/native-acceptance-config.json")));
+const work = realpathSync(launch.work_directory);
+const relative = path.relative(realpathSync(process.env.RUNNER_TEMP), work);
+assert.ok(relative && !relative.startsWith("..") && !path.isAbsolute(relative));
+assert.match(path.basename(work), /^memiro-native-/);
+assert.equal(launch.window_label, "main");
+assert.equal(launch.webview_data_directory, path.join(process.env.LOCALAPPDATA, launch.window_label, "MemiroNativeAcceptance", path.basename(work)));
+assert.ok(!existsSync(launch.webview_data_directory), "WebView2 profile must be fresh");
 const output = path.resolve("native-acceptance-results");
 mkdirSync(work, { recursive: true });
 mkdirSync(output, { recursive: true });
@@ -48,26 +58,27 @@ async function run(executable, args) {
   });
 }
 const server = net.createServer();
-await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
-const port = server.address().port;
+const port = launch.cdp_port;
+assert.ok(Number.isInteger(port) && port > 1024 && port < 65536);
+await new Promise((resolve, reject) => { server.once("error", reject); server.listen(port, "127.0.0.1", resolve); });
 await new Promise((resolve) => server.close(resolve));
 const installed = path.join(work, "installed");
 await run(installer, ["/S", `/D=${installed}`]);
+assert.ok(!existsSync(appData), "Silent installation must not launch another app instance");
 const executable = path.join(installed, "Memiro.exe");
 assert.ok(existsSync(executable), "Silent installer must install the actual executable");
 check("fresh silent NSIS installation", { executable_sha256: sha256(readFileSync(executable)) });
 let app;
 let browser;
 let page;
+let stdout = "", stderr = "";
 try {
   app = spawn(executable, [], {
-    shell: false, windowsHide: true, stdio: "ignore",
-    env: {
-      ...process.env,
-      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port} --remote-debugging-address=127.0.0.1`,
-      WEBVIEW2_USER_DATA_FOLDER: path.join(work, "webview"),
-    },
+    shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env },
   });
+  app.stdout.on("data", (bytes) => { stdout = (stdout + bytes.toString()).slice(-65536); });
+  app.stderr.on("data", (bytes) => { stderr = (stderr + bytes.toString()).slice(-65536); });
   let startError;
   app.once("error", (error) => { startError = error; });
   for (let attempt = 0; attempt < 180; attempt++) {
@@ -183,6 +194,20 @@ try {
   throw error;
 } finally {
   report.finished_at = new Date().toISOString();
+  writeFileSync(path.join(output, "app-stdout.log"), stdout);
+  writeFileSync(path.join(output, "app-stderr.log"), stderr);
+  if (app?.pid) {
+    report.owned_app = { pid: app.pid, exit_code: app.exitCode, cdp_port: port };
+    try {
+      const diagnostics = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "$all = @(Get-CimInstance Win32_Process); $ids = @([int]$env:MEMIRO_TEST_PID); for ($i = 0; $i -lt 6; $i++) { $ids += @($all | Where-Object { $_.ParentProcessId -in $ids } | Select-Object -ExpandProperty ProcessId) }; @($all | Where-Object { $_.ProcessId -in $ids } | ForEach-Object { @{ name=$_.Name; pid=$_.ProcessId; parent=$_.ParentProcessId; command=$_.CommandLine; version=if ($_.ExecutablePath) { (Get-Item -LiteralPath $_.ExecutablePath).VersionInfo.FileVersion } else { $null } }) | ConvertTo-Json -Depth 4"], {
+        windowsHide: true, encoding: "utf8", timeout: 15000, env: { ...process.env, MEMIRO_TEST_PID: String(app.pid) },
+      });
+      writeFileSync(path.join(output, "owned-processes.json"), diagnostics);
+    } catch (error) { report.process_diagnostics_error = String(error); }
+  }
+  if (existsSync(path.join(appData, "3uxo.log"))) {
+    writeFileSync(path.join(output, "app-backend.log"), readFileSync(path.join(appData, "3uxo.log")));
+  }
   writeFileSync(path.join(output, "result.json"), JSON.stringify(report, null, 2));
   if (browser) await browser.close().catch(() => {});
   if (app?.pid && app.exitCode === null) {
