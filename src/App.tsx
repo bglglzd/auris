@@ -109,6 +109,20 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const warn = listen<string>("recording-capture-warning", (e) => {
+      setListNote({ text: `Предупреждение захвата: ${e.payload}`, warn: true });
+    });
+    const error = listen<string>("recording-error", (e) => {
+      setListNote({ text: `Ошибка записи: ${e.payload}`, warn: true });
+      void refresh().catch(() => {});
+    });
+    return () => {
+      warn.then((f) => f());
+      error.then((f) => f());
+    };
+  }, [refresh]);
+
   // Mac: «Подготовка» при первом запуске (разрешения по шагам) и из Настроек.
   const [macSetup, setMacSetup] = useState(() => isMac && macSetupPending());
   useEffect(() => {
@@ -247,31 +261,54 @@ export default function App() {
   );
 
   const handleStart = async () => {
-    const id = await api.startRecording();
-    // Помечаем встречу как соло, если включён режим «я один» (фронт читает это
-    // при расшифровке — ключ в стиле 3uxo.speakers.*/3uxo.labels.*).
-    if (solo && id) localStorage.setItem(`3uxo.solo.${id}`, "1");
-    setRecording(true);
-    setPaused(false);
+    try {
+      const id = await api.startRecording();
+      // Помечаем встречу как соло, если включён режим «я один» (фронт читает это
+      // при расшифровке — ключ в стиле 3uxo.speakers.*/3uxo.labels.*).
+      if (solo && id) localStorage.setItem(`3uxo.solo.${id}`, "1");
+      setRecording(true);
+      setPaused(false);
+    } catch (error) {
+      setListNote({ text: `Не удалось начать запись: ${String(error)}`, warn: true });
+    } finally {
+      await refresh().catch(() => {});
+    }
   };
 
   const handleStop = async () => {
-    const m = await api.stopRecording();
-    setRecWarn(null);
-    setRecording(false);
-    setPaused(false);
-    await refresh();
-    if (m?.id) setSelectedId(m.id);
+    try {
+      const m = await api.stopRecording();
+      setRecording(false);
+      setPaused(false);
+      if (m?.id) setSelectedId(m.id);
+    } catch (error) {
+      setListNote({ text: `Не удалось сохранить запись: ${String(error)}`, warn: true });
+    } finally {
+      setRecWarn(null);
+      await refresh().catch(() => {});
+    }
   };
 
   const handlePause = async () => {
-    await api.pauseRecording();
-    setPaused(true);
+    try {
+      await api.pauseRecording();
+      setPaused(true);
+    } catch (error) {
+      setListNote({ text: `Не удалось приостановить запись: ${String(error)}`, warn: true });
+    } finally {
+      await refresh().catch(() => {});
+    }
   };
 
   const handleResume = async () => {
-    await api.resumeRecording();
-    setPaused(false);
+    try {
+      await api.resumeRecording();
+      setPaused(false);
+    } catch (error) {
+      setListNote({ text: `Не удалось продолжить запись: ${String(error)}`, warn: true });
+    } finally {
+      await refresh().catch(() => {});
+    }
   };
 
   const handleImported = async (id: string) => {

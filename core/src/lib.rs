@@ -5,6 +5,7 @@
 pub mod ai;
 pub mod aifix;
 pub mod audio;
+pub mod autorecord;
 pub mod call_detector;
 pub mod cloud_asr;
 pub mod cluster;

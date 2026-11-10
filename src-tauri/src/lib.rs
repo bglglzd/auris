@@ -48,7 +48,7 @@ fn setup_onnxruntime_path() {
 fn toggle_and_notify<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     use tauri::{Emitter, Manager};
     let state = app.state::<AppState>();
-    match commands::toggle_recording_state(&state) {
+    match commands::toggle_recording_state(app, &state) {
         Ok(now_recording) => {
             let _ = app.emit("recording-changed", now_recording);
             let (title, body) = if now_recording {
@@ -268,11 +268,10 @@ const AUTORECORD_POLL_MS: u64 = 2500;
 ///    (несколько опросов подряд — `active_streak`);
 /// 2) на авто-стопе запись короче `min_keep_secs` удаляется как мусорный огрызок.
 fn spawn_autorecord_monitor<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
-    use tauri::Manager;
+    use tauri::{Emitter, Manager};
+    use uxo_core::autorecord::{AutoRecordAction, AutoRecordState};
     std::thread::spawn(move || {
-        let mut auto_active = false;
-        // Сколько опросов подряд звонок был активен (для задержки старта).
-        let mut active_streak: u32 = 0;
+        let mut monitor = AutoRecordState::default();
         loop {
             std::thread::sleep(std::time::Duration::from_millis(AUTORECORD_POLL_MS));
             let (enabled, processes, auto_stop, start_delay_secs, min_keep_secs) = {
@@ -289,34 +288,39 @@ fn spawn_autorecord_monitor<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
                 )
             };
             if !enabled || processes.is_empty() {
-                auto_active = false;
-                active_streak = 0;
+                monitor.reset();
+                app.state::<AppState>().manual_stop.store(false, std::sync::atomic::Ordering::SeqCst);
                 continue;
             }
-            let recording = {
+            let recording_id = {
                 let state = app.state::<AppState>();
                 let active = state.active.lock().unwrap();
-                active.is_some()
+                active.as_ref().map(|recording| recording.id.clone())
             };
-            // Ручная остановка извне — сбрасываем флаг авто-записи.
-            if !recording {
-                auto_active = false;
-            }
             let call = uxo_core::call_detector::any_active_call(&processes);
-            active_streak = if call { active_streak.saturating_add(1) } else { 0 };
+            let manual_stop = app.state::<AppState>().manual_stop.swap(false, std::sync::atomic::Ordering::SeqCst);
 
             // Сколько опросов подряд требуется до старта (округление вверх; >=1).
             let required = (((start_delay_secs as u64 * 1000) + AUTORECORD_POLL_MS - 1)
                 / AUTORECORD_POLL_MS)
                 .max(1) as u32;
 
-            if call && !recording && active_streak >= required {
-                toggle_and_notify(&app);
-                auto_active = true;
-            } else if !call && recording && auto_active && auto_stop {
-                auto_stop_and_maybe_discard(&app, min_keep_secs);
-                auto_active = false;
-                active_streak = 0;
+            match monitor.tick(call, recording_id.as_deref(), manual_stop, required, auto_stop) {
+                AutoRecordAction::Start => {
+                    let state = app.state::<AppState>();
+                    match commands::start_recording_if_idle(&state) {
+                        Ok(Some(id)) => {
+                            monitor.started(id);
+                            let _ = app.emit("recording-changed", true);
+                            commands::notify(&app, "🔴 Memiro — запись начата", "Идёт запись звонка");
+                            commands::report_recorder_warning(&app, &state);
+                        }
+                        Ok(None) => {}
+                        Err(error) => { let _ = app.emit("recording-error", error.to_string()); }
+                    }
+                }
+                AutoRecordAction::Stop(id) => auto_stop_and_maybe_discard(&app, min_keep_secs, &id),
+                AutoRecordAction::None => {}
             }
         }
     });
@@ -324,10 +328,10 @@ fn spawn_autorecord_monitor<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
 
 /// Авто-стоп записи: останавливает и, если получившаяся запись короче
 /// `min_keep_secs`, удаляет её как мусорный огрызок (звук уведомления).
-fn auto_stop_and_maybe_discard<R: tauri::Runtime>(app: &tauri::AppHandle<R>, min_keep_secs: u32) {
+fn auto_stop_and_maybe_discard<R: tauri::Runtime>(app: &tauri::AppHandle<R>, min_keep_secs: u32, expected_id: &str) {
     use tauri::{Emitter, Manager};
     let state = app.state::<AppState>();
-    match commands::stop_active_recording(&state) {
+    match commands::stop_active_recording(app, &state, expected_id) {
         Ok(Some(meeting)) => {
             let _ = app.emit("recording-changed", false);
             if min_keep_secs > 0 && meeting.duration_secs < min_keep_secs as u64 {
@@ -418,6 +422,7 @@ pub fn run() {
                 autorecord: std::sync::Arc::new(Mutex::new(
                     commands::AutoRecordCfg::default(),
                 )),
+                manual_stop: std::sync::atomic::AtomicBool::new(false),
             });
 
             setup_global_shortcut(app);

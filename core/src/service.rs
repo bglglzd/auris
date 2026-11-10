@@ -35,16 +35,108 @@ fn segment_paths(dir: &Path, idx: usize) -> (PathBuf, PathBuf) {
     )
 }
 
-/// Собирает части одной дорожки в `dst` и удаляет части. Один сегмент —
-/// мгновенное переименование (без перекодирования); несколько — склейка
-/// [`concat_wavs`]. Пустой список — валидный WAV нулевой длины.
+/// Проверяет и длину заголовка, и фактическую длину записанного PCM.
+fn complete_pcm_frames(path: &Path) -> Option<u64> {
+    let reader = hound::WavReader::open(path).ok()?;
+    let spec = reader.spec();
+    if spec.channels != 1
+        || spec.sample_rate != 16_000
+        || spec.bits_per_sample != 16
+        || spec.sample_format != hound::SampleFormat::Int
+    {
+        return None;
+    }
+    let frames = u64::from(reader.duration());
+    let mut input = reader.into_inner();
+    let start = std::io::Seek::stream_position(&mut input).ok()?;
+    let length = std::fs::metadata(path).ok()?.len();
+    (start.checked_add(frames * 2)? == length).then_some(frames)
+}
+
+fn part_frames(parts: &[PathBuf]) -> Option<u64> {
+    parts.iter().try_fold(0_u64, |sum, path| {
+        sum.checked_add(complete_pcm_frames(path)?)
+    })
+}
+
+fn should_assemble_track(parts: &[PathBuf], dst: &Path) -> bool {
+    if !dst.exists() {
+        return true;
+    }
+    if parts.is_empty() {
+        return false;
+    }
+    let Some(final_frames) = complete_pcm_frames(dst) else {
+        return true;
+    };
+    // The editor keeps the original before replacing a track, including a
+    // deliberate full-length cut. Retained capture parts must not undo it.
+    let edited_original = dst.with_file_name(orig_name(
+        dst.file_name().and_then(|name| name.to_str()).unwrap_or(""),
+    ));
+    if edited_original.exists() {
+        return false;
+    }
+    let source_frames = part_frames(parts);
+    if final_frames == 0 {
+        return source_frames != Some(0);
+    }
+    let track = dst.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    let whole_prefix = parts.iter().enumerate().all(|(index, path)| {
+        path.file_name()
+            .and_then(|s| s.to_str())
+            .and_then(|s| parse_part_index(s, track))
+            == Some(index)
+    });
+    whole_prefix && source_frames.is_some_and(|count| count > final_frames)
+}
+
+fn only_empty_wavs(dir: &Path) -> bool {
+    let Ok(mut entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.all(|entry| {
+        entry.ok().is_some_and(|entry| {
+            entry.file_type().is_ok_and(|kind| kind.is_file())
+                && entry.path().extension().is_some_and(|ext| ext == "wav")
+                && complete_pcm_frames(&entry.path()) == Some(0)
+                && entry.metadata().is_ok_and(|metadata| metadata.len() <= 44)
+        })
+    })
+}
+
+/// Продвигает готовый WAV атомарно и удаляет только полностью скопированные части.
 fn assemble_track(parts: &[PathBuf], dst: &Path) -> AppResult<()> {
+    // A final file may already contain parts removed before an interrupted
+    // cleanup. Never replace it with the remaining suffix.
+    if !should_assemble_track(parts, dst) {
+        return Ok(());
+    }
+    if dst.exists() {
+        let mut index = 0_u64;
+        let mut backup = dst.with_extension("recovery-original.wav");
+        while backup.exists() {
+            index += 1;
+            backup = dst.with_extension(format!("recovery-original-{index}.wav"));
+        }
+        std::fs::rename(dst, backup)?;
+    }
     if parts.len() == 1 && std::fs::rename(&parts[0], dst).is_ok() {
         return Ok(());
     }
-    concat_wavs(parts, dst)?;
-    for p in parts {
-        let _ = std::fs::remove_file(p);
+    let staged = dst.with_extension("assembling.wav");
+    concat_wavs(parts, &staged)?;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&staged)?
+        .sync_all()?;
+    std::fs::rename(&staged, dst)?;
+    // Cleanup is safe only when all declared PCM frames were copied. Keep
+    // truncated, unparseable or partially read source files for inspection.
+    if part_frames(parts).is_some_and(|expected| complete_pcm_frames(dst) == Some(expected)) {
+        for p in parts {
+            let _ = std::fs::remove_file(p);
+        }
     }
     Ok(())
 }
@@ -84,10 +176,21 @@ pub fn start_recording(
 /// паузе — без изменений.
 pub fn pause_recording(
     recorder: &dyn Recorder,
+    active: ActiveRecording,
+) -> AppResult<ActiveRecording> {
+    pause_recording_with_warning(recorder, active, |error| eprintln!("capture stop: {error}"))
+}
+
+/// Сохраняет завершённые сегменты даже при ошибке захвата; диагностику получает вызывающий.
+pub fn pause_recording_with_warning(
+    recorder: &dyn Recorder,
     mut active: ActiveRecording,
+    mut on_warning: impl FnMut(&AppError),
 ) -> AppResult<ActiveRecording> {
     if let Some(current) = active.current.take() {
-        recorder.stop()?;
+        if let Err(error) = recorder.stop() {
+            on_warning(&error);
+        }
         active.segments.push(current);
     }
     Ok(active)
@@ -115,10 +218,23 @@ pub fn stop_recording(
     active: &ActiveRecording,
     created_at: String,
 ) -> AppResult<Meeting> {
+    stop_recording_with_warning(recorder, repo, active, created_at, |error| eprintln!("capture stop: {error}"))
+}
+
+/// Ошибка завершённого потока не отменяет сохранение доступных дорожек.
+pub fn stop_recording_with_warning(
+    recorder: &dyn Recorder,
+    repo: &Repo,
+    active: &ActiveRecording,
+    created_at: String,
+    mut on_warning: impl FnMut(&AppError),
+) -> AppResult<Meeting> {
     let mut segments = active.segments.clone();
     // Если запись шла (не на паузе) — финализируем текущий сегмент.
     if let Some(current) = active.current.clone() {
-        recorder.stop()?;
+        if let Err(error) = recorder.stop() {
+            on_warning(&error);
+        }
         segments.push(current);
     }
 
@@ -153,8 +269,8 @@ pub fn stop_recording(
 /// во время записи: в папках встреч ищет несклеенные сегменты
 /// (`mic.part{N}.wav`/`system.part{N}.wav`), собирает их в единые
 /// `mic.wav`/`system.wav`, удаляет части и добавляет встречу в БД, если её там
-/// ещё нет. Слишком короткие огрызки (<1 с, не дошедшие до БД) удаляются целиком,
-/// чтобы не плодить мусор. Возвращает число восстановленных встреч.
+/// ещё нет. Удаляются только проверенные пустые WAV без других данных;
+/// неполные или неоднозначные файлы сохраняются. Возвращает число встреч.
 ///
 /// Запускается при старте приложения, когда активной записи заведомо нет —
 /// поэтому любые части на диске действительно осиротевшие.
@@ -179,24 +295,35 @@ pub fn recover_orphan_recordings(
             Err(_) => continue,
         };
         let (mic_parts, system_parts) = collect_segment_parts(&dir);
-        if mic_parts.is_empty() && system_parts.is_empty() {
-            continue; // нет осиротевших частей — встреча завершилась штатно
-        }
-
         let mic_final = dir.join("mic.wav");
         let system_final = dir.join("system.wav");
+        let already_known = repo.get(&id).is_ok();
+        if already_known && !should_assemble_track(&mic_parts, &mic_final)
+            && !should_assemble_track(&system_parts, &system_final) {
+            continue;
+        }
+        let retained_legacy_parts = (mic_final.exists() && !mic_parts.is_empty())
+            || (system_final.exists() && !system_parts.is_empty());
+        if mic_parts.is_empty() && system_parts.is_empty()
+            && (already_known || (!mic_final.exists() && !system_final.exists())) {
+            continue;
+        }
+        // Запись могла упасть после переименования одной/обеих дорожек, но до
+        // вставки в БД. Не заменяем уже сохранённый звук пустым списком частей.
         assemble_track(&mic_parts, &mic_final)?;
         assemble_track(&system_parts, &system_final)?;
 
         let duration_secs = wav_duration_secs(&mic_final)
             .unwrap_or(0)
             .max(wav_duration_secs(&system_final).unwrap_or(0));
-        let already_known = repo.get(&id).is_ok();
-        if duration_secs == 0 && !already_known {
-            // Пустой огрызок (краш сразу после старта) — выкидываем целиком.
-            let _ = std::fs::remove_dir_all(&dir);
+        let has_samples = [&mic_final, &system_final].iter()
+            .any(|path| complete_pcm_frames(path).is_some_and(|frames| frames > 0));
+        if !has_samples && !already_known {
+            // Zero parsed duration is not proof that no audio bytes exist.
+            if only_empty_wavs(&dir) { let _ = std::fs::remove_dir_all(&dir); }
             continue;
         }
+        let retained_sources = retained_legacy_parts || mic_parts.iter().chain(&system_parts).any(|path| path.exists());
         if !already_known {
             let meeting = Meeting {
                 id: id.clone(),
@@ -208,10 +335,16 @@ pub fn recover_orphan_recordings(
                 folder: id.clone(),
                 status: "recorded".into(),
                 source: "recorded".into(),
-                notes: String::new(),
+                notes: if retained_sources {
+                    "Проверьте восстановленную запись. Исходные файлы сохранены в её папке.".into()
+                } else {
+                    String::new()
+                },
                 collection: String::new(),
             };
             repo.insert(&meeting)?;
+        } else {
+            repo.update_duration(&id, duration_secs)?;
         }
         recovered += 1;
     }
@@ -796,6 +929,224 @@ mod tests {
         let repo = Repo::open_in_memory().unwrap();
         let rec = MockRecorder::new(2);
         (dir, repo, rec)
+    }
+
+    struct StopErrorRecorder(MockRecorder);
+
+    impl Recorder for StopErrorRecorder {
+        fn start(&self, mic: &Path, system: &Path) -> AppResult<()> {
+            self.0.start(mic, system)
+        }
+        fn stop(&self) -> AppResult<crate::recorder::RecordingResult> {
+            self.0.stop()?;
+            Err(AppError::Audio("synthetic capture stop failure".into()))
+        }
+        fn is_recording(&self) -> bool { self.0.is_recording() }
+    }
+
+    #[test]
+    fn capture_stop_error_preserves_pause_segments_and_saves_both_tracks_with_warning() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repo::open_in_memory().unwrap();
+        let rec = StopErrorRecorder(MockRecorder::new(2));
+        let mut warnings = Vec::new();
+        let active = start_recording(&rec, dir.path(), "stop-error".into()).unwrap();
+        let paused = pause_recording_with_warning(&rec, active, |e| warnings.push(e.to_string())).unwrap();
+        assert!(paused.current.is_none());
+        assert!(!rec.is_recording());
+        assert_eq!(paused.segments.len(), 1);
+        let resumed = resume_recording(&rec, paused).unwrap();
+        let meeting = stop_recording_with_warning(&rec, &repo, &resumed, "2026-11-10T00:00:00Z".into(), |e| warnings.push(e.to_string())).unwrap();
+        assert_eq!(warnings.len(), 2);
+        assert!(warnings.iter().all(|w| w.contains("synthetic capture stop failure")));
+        assert!(!rec.is_recording());
+        assert_eq!(meeting.duration_secs, 4);
+        assert_eq!(repo.get("stop-error").unwrap().duration_secs, 4);
+        for track in ["mic.wav", "system.wav"] {
+            assert_eq!(wav_duration_secs(&resumed.dir.join(track)).unwrap(), 4);
+        }
+    }
+
+    #[test]
+    fn startup_recovers_final_audio_after_database_insert_failure_without_rewriting_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("synthetic.db");
+        let repo = Repo::open(&db).unwrap();
+        let control = rusqlite::Connection::open(&db).unwrap();
+        control.execute_batch("CREATE TRIGGER synthetic_insert_failure BEFORE INSERT ON meetings BEGIN SELECT RAISE(FAIL, 'synthetic failure'); END;").unwrap();
+        let rec = MockRecorder::new(2);
+        let active = start_recording(&rec, dir.path(), "database-error".into()).unwrap();
+        assert!(stop_recording(&rec, &repo, &active, "2026-11-10T00:00:00Z".into()).is_err());
+        let original = std::fs::read(active.dir.join("mic.wav")).unwrap();
+        assert!(!original.is_empty());
+        control.execute_batch("DROP TRIGGER synthetic_insert_failure;").unwrap();
+        assert_eq!(recover_orphan_recordings(&repo, dir.path(), "2026-11-10T00:00:00Z".into()).unwrap(), 1);
+        assert_eq!(repo.get("database-error").unwrap().duration_secs, 2);
+        assert_eq!(std::fs::read(active.dir.join("mic.wav")).unwrap(), original);
+        assert_eq!(recover_orphan_recordings(&repo, dir.path(), "2026-11-10T00:00:00Z".into()).unwrap(), 0);
+    }
+
+    #[test]
+    fn recovery_keeps_completed_track_when_only_the_other_track_has_parts() {
+        let (dir, repo, rec) = setup();
+        let active = start_recording(&rec, dir.path(), "partial-rename".into()).unwrap();
+        rec.stop().unwrap();
+        let mic_part = &active.current.as_ref().unwrap().0;
+        let original = std::fs::read(mic_part).unwrap();
+        std::fs::rename(mic_part, active.dir.join("mic.wav")).unwrap();
+        assert_eq!(recover_orphan_recordings(&repo, dir.path(), "2026-11-10T00:00:00Z".into()).unwrap(), 1);
+        assert_eq!(std::fs::read(active.dir.join("mic.wav")).unwrap(), original);
+        assert_eq!(repo.get("partial-rename").unwrap().duration_secs, 2);
+    }
+
+    #[test]
+    fn recovery_never_replaces_complete_audio_with_leftover_suffix_parts() {
+        let (dir, repo, rec) = setup();
+        let active = start_recording(&rec, dir.path(), "suffix-parts".into()).unwrap();
+        let paused = pause_recording(&rec, active).unwrap();
+        let resumed = resume_recording(&rec, paused).unwrap();
+        rec.stop().unwrap();
+        let mut parts = resumed.segments.clone();
+        parts.push(resumed.current.clone().unwrap());
+        let mic_final = resumed.dir.join("mic.wav");
+        concat_wavs(&parts.iter().map(|p| p.0.clone()).collect::<Vec<_>>(), &mic_final).unwrap();
+        let complete = std::fs::read(&mic_final).unwrap();
+        // Emulate a previous version interrupted after writing the complete
+        // final file and deleting only the first source part.
+        std::fs::remove_file(&parts[0].0).unwrap();
+        assert_eq!(recover_orphan_recordings(&repo, dir.path(), "2026-11-10T00:00:00Z".into()).unwrap(), 1);
+        assert!(std::fs::read(&mic_final).unwrap() == complete, "complete WAV must remain byte-identical");
+        assert_eq!(wav_duration_secs(&mic_final).unwrap(), 4);
+        assert_eq!(repo.get("suffix-parts").unwrap().duration_secs, 4);
+        assert!(parts[1].0.exists(), "ambiguous legacy parts are preserved");
+        assert_eq!(recover_orphan_recordings(&repo, dir.path(), "2026-11-10T00:00:00Z".into()).unwrap(), 0);
+    }
+
+    #[test]
+    fn recovery_rebuilds_zero_frame_legacy_finals_from_valid_parts() {
+        for existing_row in [false, true] {
+            let (dir, repo, rec) = setup();
+            let active = start_recording(&rec, dir.path(), "zero-finals".into()).unwrap();
+            let paused = pause_recording(&rec, active).unwrap();
+            let resumed = resume_recording(&rec, paused).unwrap();
+            rec.stop().unwrap();
+            std::fs::remove_file(resumed.dir.join("mic.part0.wav")).unwrap();
+            std::fs::remove_file(resumed.dir.join("mic.part1.wav")).unwrap();
+            crate::audio::write_silence_wav(&resumed.dir.join("mic.wav"), 0).unwrap();
+            crate::audio::write_silence_wav(&resumed.dir.join("system.wav"), 0).unwrap();
+            if existing_row {
+                repo.insert(&Meeting { id: "zero-finals".into(), created_at: "2026-11-10T00:00:00Z".into(), title: "Synthetic title".into(), participants: String::new(), topic: String::new(), duration_secs: 0, folder: "zero-finals".into(), status: "recorded".into(), source: "recorded".into(), notes: "Synthetic existing note".into(), collection: String::new() }).unwrap();
+            }
+            assert_eq!(recover_orphan_recordings(&repo, dir.path(), "2026-11-10T00:00:00Z".into()).unwrap(), 1);
+            assert_eq!(repo.get("zero-finals").unwrap().duration_secs, 4);
+            assert_eq!(complete_pcm_frames(&resumed.dir.join("system.wav")), Some(64_000));
+            assert!(resumed.dir.join("system.recovery-original.wav").exists());
+            if existing_row { assert_eq!(repo.get("zero-finals").unwrap().notes, "Synthetic existing note"); }
+            assert_eq!(recover_orphan_recordings(&repo, dir.path(), "2026-11-10T00:00:00Z".into()).unwrap(), 0);
+        }
+    }
+
+    #[test]
+    fn recovery_preserves_unparseable_source_bytes_instead_of_deleting_zero_duration_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repo::open_in_memory().unwrap();
+        let meeting = meeting_dir(dir.path(), "unparseable");
+        std::fs::create_dir_all(&meeting).unwrap();
+        let raw = b"synthetic unparseable audio payload retained for repair";
+        std::fs::write(meeting.join("system.part0.wav"), raw).unwrap();
+        crate::audio::write_silence_wav(&meeting.join("system.wav"), 0).unwrap();
+        crate::audio::write_silence_wav(&meeting.join("mic.wav"), 0).unwrap();
+        assert_eq!(recover_orphan_recordings(&repo, dir.path(), "2026-11-10T00:00:00Z".into()).unwrap(), 0);
+        assert!(meeting.is_dir());
+        assert!(std::fs::read_dir(&meeting).unwrap().flatten().any(|entry| std::fs::read(entry.path()).is_ok_and(|bytes| bytes == raw)));
+        assert_eq!(recover_orphan_recordings(&repo, dir.path(), "2026-11-10T00:00:00Z".into()).unwrap(), 0);
+    }
+
+    #[test]
+    fn recovery_retains_invalid_parts_when_only_a_readable_prefix_was_consolidated() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repo::open_in_memory().unwrap();
+        let meeting = meeting_dir(dir.path(), "partial-source");
+        std::fs::create_dir_all(&meeting).unwrap();
+        crate::audio::write_silence_wav(&meeting.join("system.part0.wav"), 2).unwrap();
+        let raw = b"synthetic corrupt suffix that must not be discarded";
+        std::fs::write(meeting.join("system.part1.wav"), raw).unwrap();
+        assert_eq!(recover_orphan_recordings(&repo, dir.path(), "2026-11-10T00:00:00Z".into()).unwrap(), 1);
+        assert_eq!(repo.get("partial-source").unwrap().duration_secs, 2);
+        assert!(std::fs::read(meeting.join("system.part1.wav")).unwrap() == raw);
+        assert!(meeting.join("system.part0.wav").exists());
+        assert!(!repo.get("partial-source").unwrap().notes.is_empty());
+    }
+
+    #[test]
+    fn recovery_prefers_a_complete_source_prefix_over_a_short_legacy_final() {
+        let (dir, repo, rec) = setup();
+        let active = start_recording(&rec, dir.path(), "short-final".into()).unwrap();
+        let paused = pause_recording(&rec, active).unwrap();
+        let resumed = resume_recording(&rec, paused).unwrap();
+        rec.stop().unwrap();
+        crate::audio::write_silence_wav(&resumed.dir.join("system.wav"), 2).unwrap();
+        assert_eq!(recover_orphan_recordings(&repo, dir.path(), "2026-11-10T00:00:00Z".into()).unwrap(), 1);
+        assert_eq!(complete_pcm_frames(&resumed.dir.join("system.wav")), Some(64_000));
+        assert_eq!(complete_pcm_frames(&resumed.dir.join("system.recovery-original.wav")), Some(32_000));
+    }
+
+    #[test]
+    fn recovery_preserves_intentional_audio_edits_with_retained_legacy_parts() {
+        for cut_end in [2.0, 4.0] {
+            let (dir, repo, rec) = setup();
+            let active = start_recording(&rec, dir.path(), "edited-legacy".into()).unwrap();
+            let paused = pause_recording(&rec, active).unwrap();
+            let resumed = resume_recording(&rec, paused).unwrap();
+            rec.stop().unwrap();
+            let mut parts = resumed.segments.clone();
+            parts.push(resumed.current.clone().unwrap());
+            for (track, sources) in [
+                ("mic.wav", parts.iter().map(|p| p.0.clone()).collect::<Vec<_>>()),
+                ("system.wav", parts.iter().map(|p| p.1.clone()).collect::<Vec<_>>()),
+            ] {
+                concat_wavs(&sources, &resumed.dir.join(track)).unwrap();
+            }
+            let timestamp = "2026-11-10T00:00:00Z";
+            assert_eq!(recover_orphan_recordings(&repo, dir.path(), timestamp.into()).unwrap(), 1);
+            repo.update_notes("edited-legacy", "Synthetic user note").unwrap();
+            let duration = apply_audio_edit_files(dir.path(), "edited-legacy", &[Range::new(0.0, cut_end)]).unwrap();
+            repo.update_duration("edited-legacy", duration).unwrap();
+            let edited = std::fs::read(resumed.dir.join("system.wav")).unwrap();
+            for _ in 0..2 {
+                assert_eq!(recover_orphan_recordings(&repo, dir.path(), timestamp.into()).unwrap(), 0);
+                assert!(std::fs::read(resumed.dir.join("system.wav")).unwrap() == edited);
+                assert_eq!(repo.get("edited-legacy").unwrap().duration_secs, duration);
+                assert_eq!(repo.get("edited-legacy").unwrap().notes, "Synthetic user note");
+                assert!(resumed.dir.join("system.part0.wav").exists());
+                assert!(resumed.dir.join("system.orig.wav").exists());
+            }
+            if duration > 0 {
+                let missing_database = Repo::open_in_memory().unwrap();
+                assert_eq!(recover_orphan_recordings(&missing_database, dir.path(), timestamp.into()).unwrap(), 1);
+                assert_eq!(missing_database.get("edited-legacy").unwrap().duration_secs, duration);
+                assert!(std::fs::read(resumed.dir.join("system.wav")).unwrap() == edited);
+            }
+            let restored = revert_audio_edit_files(dir.path(), "edited-legacy").unwrap();
+            repo.update_duration("edited-legacy", restored).unwrap();
+            assert_eq!(restored, 4);
+            assert_eq!(recover_orphan_recordings(&repo, dir.path(), timestamp.into()).unwrap(), 0);
+            assert_eq!(repo.get("edited-legacy").unwrap().duration_secs, 4);
+        }
+    }
+
+    #[test]
+    fn recovery_does_not_round_a_subsecond_recording_down_to_no_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repo::open_in_memory().unwrap();
+        let meeting = meeting_dir(dir.path(), "subsecond");
+        std::fs::create_dir_all(&meeting).unwrap();
+        let mut writer = hound::WavWriter::create(meeting.join("system.part0.wav"), hound::WavSpec { channels: 1, sample_rate: 16_000, bits_per_sample: 16, sample_format: hound::SampleFormat::Int }).unwrap();
+        for _ in 0..2_000 { writer.write_sample(123_i16).unwrap(); }
+        writer.finalize().unwrap();
+        assert_eq!(recover_orphan_recordings(&repo, dir.path(), "2026-11-10T00:00:00Z".into()).unwrap(), 1);
+        assert_eq!(complete_pcm_frames(&meeting.join("system.wav")), Some(2_000));
+        assert!(repo.get("subsecond").is_ok());
     }
 
     #[test]
