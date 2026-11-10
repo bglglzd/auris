@@ -1,0 +1,10 @@
+{
+  "origin": "Offline Windows System.Speech built-in ru-RU synthesis. No microphone or audio playback.",
+  "expected_text": "Это синтетическая тестовая запись. Проверяем импорт, распознавание и сохранение текста.",
+  "sample_rate": 16000,
+  "channels": 1,
+  "sample_width": 2,
+  "frames": 138000,
+  "duration_seconds": 8.625,
+  "sha256": "3c2bbab3eb8016e7916d48616c6853ba7642af3a3e1651c0641ea42df1b56594"
+}

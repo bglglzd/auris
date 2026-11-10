@@ -36,7 +36,11 @@ locks. Native Tauri and JavaScript plugin versions must be updated together.
 4. Run the checks for the parts you touched and list them in the PR description.
 5. Keep refactors and formatting-only changes out of bug fixes.
 6. UI changes follow the Memiro design system in `src/App.css` (tokens, fonts, both themes).
-7. Privacy first: nothing leaves the user's machine except requests to the AI endpoint
-   the user configured.
+7. Preserve local recognition by default. Optional AI sends meeting text/context
+   and optional server recognition sends audio to the user's configured endpoint.
+   Document those boundaries; never use private audio or credentials in tests.
+
+The Windows CI also runs [native installation/import/ASR/export acceptance](docs/native-acceptance.md)
+on a fresh hosted runner. Do not run that harness against a personal app profile.
 
 By contributing you agree that your work is distributed under the repository's MIT license.
