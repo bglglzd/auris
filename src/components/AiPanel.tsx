@@ -29,6 +29,7 @@ export function AiPanel({ meeting, labels, hasTranscript, reports, onReport, onM
   const [answer, setAnswer] = useState("");
   const [editKind, setEditKind] = useState<ReportKind | null>(null);
   const [draft, setDraft] = useState("");
+  const [editBase, setEditBase] = useState("");
   const [saving, setSaving] = useState(false);
   // Плашки пресетов — ровными рядами (6 → 6 / 3×2 / 2×3), без пустых мест.
   const gridRef = useRef<HTMLDivElement>(null);
@@ -135,7 +136,7 @@ export function AiPanel({ meeting, labels, hasTranscript, reports, onReport, onM
   const saveEdit = async (kind: ReportKind) => {
     setSaving(true);
     try {
-      await api.saveReport(meeting.id, kind, draft);
+      await api.saveReportEdit(meeting.id, kind, editBase, draft);
       onReport(kind, draft);
       setEditKind(null);
     } catch (e) {
@@ -188,6 +189,7 @@ export function AiPanel({ meeting, labels, hasTranscript, reports, onReport, onM
                   setError("");
                   setEditKind(kind);
                   setDraft(content);
+                  setEditBase(content);
                 }}
                 title="Исправить текст отчёта"
               >

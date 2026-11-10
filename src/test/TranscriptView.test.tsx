@@ -53,6 +53,18 @@ describe("TranscriptView speaker menu", () => {
 });
 
 describe("TranscriptView inline edit and gaps", () => {
+  it("retains a rejected inline draft instead of closing it", async () => {
+    const onSaveText = vi.fn(async () => false);
+    render(<TranscriptView transcript={transcript} activeIndex={-1} labels={{}} onSeek={() => {}} onSaveText={onSaveText} />);
+    await userEvent.click(screen.getAllByLabelText("Исправить текст реплики")[0]);
+    const box = screen.getByPlaceholderText("Что было сказано…");
+    await userEvent.clear(box); await userEvent.type(box, "Synthetic unsaved draft");
+    await userEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Черновик оставлен");
+    expect(box).toHaveValue("Synthetic unsaved draft");
+    expect(onSaveText).toHaveBeenCalledTimes(1);
+  });
+
   it("edits one phrase in place and saves with Ctrl+Enter", async () => {
     const onSaveText = vi.fn();
     const onSeek = vi.fn();
