@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
@@ -75,6 +75,13 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
   const [micUrl, setMicUrl] = useState("");
   const [sysUrl, setSysUrl] = useState("");
   const [transcript, setTranscript] = useState<Transcript | null>(null);
+  const savedTranscript = useRef<Transcript | null>(null);
+  const setSavedTranscript = useCallback((value: Transcript | null) => {
+    savedTranscript.current = value;
+    setTranscript(value);
+  }, []);
+  // UI-only placeholders are not part of the file snapshot used for merging.
+  const savedAtRender = savedTranscript.current;
   const [error, setError] = useState("");
   // Правка расшифровки: черновик живёт отдельно, пишется в файл по «Сохранить».
   const [editing, setEditing] = useState(false);
@@ -149,6 +156,8 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
   };
 
   useEffect(() => {
+    let alive = true;
+    setSavedTranscript(null);
     setTitle(meeting.title);
     setParticipants(meeting.participants);
     setTopic(meeting.topic);
@@ -162,10 +171,11 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
     setEditorOpen(false);
     setNotice("");
     setReports({});
-    api.getTranscript(meeting.id).then(setTranscript).catch(() => {});
-    api.getReports(meeting.id).then(setReports).catch(() => {});
-    api.hasVoiceAnalysis(meeting.id).then(setHasVoices).catch(() => setHasVoices(false));
-    api.voiceAnalysisTrack(meeting.id).then(setVoiceTrack).catch(() => setVoiceTrack(null));
+    api.getTranscript(meeting.id).then((value) => { if (alive) setSavedTranscript(value); }).catch(() => {});
+    api.getReports(meeting.id).then((value) => { if (alive) setReports(value); }).catch(() => {});
+    api.hasVoiceAnalysis(meeting.id).then((value) => { if (alive) setHasVoices(value); }).catch(() => { if (alive) setHasVoices(false); });
+    api.voiceAnalysisTrack(meeting.id).then((value) => { if (alive) setVoiceTrack(value); }).catch(() => { if (alive) setVoiceTrack(null); });
+    return () => { alive = false; };
   }, [meeting.id, isImported]);
 
   // Фоновое уточнение трудных мест: прогресс и перезагрузка улучшенной
@@ -194,7 +204,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
       const d = (e as CustomEvent<{ id: string; changed: number }>).detail;
       if (d.id !== meeting.id || !alive) return;
       setAiFix((a) => ({ ...a, running: false, changed: d.changed }));
-      api.getTranscript(meeting.id).then((t) => alive && setTranscript(t)).catch(() => {});
+      api.getTranscript(meeting.id).then((t) => alive && setSavedTranscript(t)).catch(() => {});
       void check();
     };
     window.addEventListener(TRANSCRIPT_EVENT, onChanged);
@@ -213,7 +223,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
   const undoAiFix = async () => {
     try {
       const t = await api.revertAiCorrection(meeting.id);
-      setTranscript(t);
+      setSavedTranscript(t);
       setAiFix({ running: false, done: 0, total: 0, changed: null, undo: false });
     } catch (e) {
       setError(String(e));
@@ -237,7 +247,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
         if (p.id !== meeting.id || !alive) return;
         setRefine((r) => {
           if (p.improved > r.improved || p.finished) {
-            api.getTranscript(meeting.id).then((t) => alive && setTranscript(t)).catch(() => {});
+            api.getTranscript(meeting.id).then((t) => alive && setSavedTranscript(t)).catch(() => {});
           }
           return { running: !p.finished, done: p.done, total: p.total, improved: p.improved, pending: p.finished ? 0 : r.pending };
         });
@@ -275,7 +285,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
     let alive = true;
     const on = (event: Event) => {
       if ((event as CustomEvent<{ id: string }>).detail?.id !== meeting.id) return;
-      api.getTranscript(meeting.id).then((value) => { if (alive) setTranscript(value); }).catch(() => {});
+      api.getTranscript(meeting.id).then((value) => { if (alive) setSavedTranscript(value); }).catch(() => {});
       api.getReports(meeting.id).then((value) => { if (alive) setReports(value); }).catch(() => {});
     };
     window.addEventListener(MEETING_TEXT_EVENT, on);
@@ -305,7 +315,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
       setEditing(false);
       setDraft(null);
       setNotice("");
-      api.getTranscript(meeting.id).then(setTranscript).catch(() => {});
+      api.getTranscript(meeting.id).then(setSavedTranscript).catch(() => {});
       api.hasVoiceAnalysis(meeting.id).then(setHasVoices).catch(() => {});
       api.voiceAnalysisTrack(meeting.id).then(setVoiceTrack).catch(() => {});
     }
@@ -414,7 +424,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
     setPlaying(false);
     setEditing(false);
     setDraft(null);
-    api.getTranscript(meeting.id).then(setTranscript).catch(() => {});
+    api.getTranscript(meeting.id).then(setSavedTranscript).catch(() => {});
     onMetaSaved();
   };
 
@@ -434,8 +444,8 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
 
   // ---- Правка расшифровки ----
   const startEdit = () => {
-    if (!transcript) return;
-    draftBase.current = transcript;
+    if (!transcript || !savedAtRender) return;
+    draftBase.current = savedAtRender;
     setDraft({ segments: transcript.segments.map((s) => ({ ...s })) });
     setEditing(true);
   };
@@ -457,11 +467,11 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
     );
   // ---- Правка прямо в ленте: текст реплики, пропуски ----
   const gaps = useMemo(() => (transcript ? findGaps(transcript, 3, duration) : []), [transcript, duration]);
-  const persist = async (t: Transcript) => {
-    if (!transcript) return false;
+  const persist = async (t: Transcript, base = savedAtRender) => {
+    if (!base) return false;
     try {
-      const stored = await api.saveTranscriptEdits(meeting.id, transcript, t);
-      setTranscript(stored);
+      const stored = await api.saveTranscriptEdits(meeting.id, base, t);
+      setSavedTranscript(stored);
       return true;
     } catch (e) {
       setError(String(e));
@@ -472,11 +482,11 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
   const [why, setWhy] = useState<Record<string, string>>({});
   // Открыть правку новой реплики (кнопка в плеере).
   const [openRequest, setOpenRequest] = useState<{ index: number; nonce: number } | null>(null);
-  const saveText = async (i: number, text: string, speaker?: string) => {
+  const saveText = async (i: number, text: string, speaker?: string, base?: Transcript | null) => {
     if (!transcript) return false;
     const before = transcript.segments[i];
     const t = setSegmentText(transcript, i, text, speaker);
-    if (!await persist(t)) return false;
+    if (!await persist(t, base ?? savedAtRender)) return false;
     if (!before || !text.trim() || before.text.trim() === text.trim()) return true;
     const added = before.origin === "user" && !before.text.trim();
     // Учимся на правке: термины и замены «как распознано → как правильно»
@@ -557,12 +567,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
   const reassign = async (i: number, speaker: string | null, following: boolean) => {
     if (!transcript) return;
     const t = reassignSegment(transcript, i, speaker ?? newSpeakerId(transcript), following);
-    try {
-      await api.saveTranscript(meeting.id, t);
-      setTranscript(t);
-    } catch (e) {
-      setError(String(e));
-    }
+    await persist(t);
   };
   const deleteSegment = (i: number) =>
     setDraft((d) => (d ? { segments: d.segments.filter((_, j) => j !== i) } : d));
@@ -574,7 +579,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
     };
     try {
       const stored = await api.saveTranscriptEdits(meeting.id, draftBase.current, cleaned);
-      setTranscript(stored);
+      setSavedTranscript(stored);
       setEditing(false);
       setDraft(null);
     } catch (e) {
@@ -602,7 +607,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
       for (const [k, val] of Object.entries(labels)) if (!/^spk\d+$/.test(k)) kept[k] = val;
       setLbls(kept);
       saveLabels(meeting.id, kept);
-      setTranscript(t);
+      setSavedTranscript(t);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -615,8 +620,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
     const merged = mergeSpeakers(transcript, from, into);
     const { transcript: t, labels: l } = renumberSpeakers(merged, labels);
     try {
-      await api.saveTranscript(meeting.id, t);
-      setTranscript(t);
+      if (!await persist(t)) return;
       setLbls(l);
       saveLabels(meeting.id, l);
     } catch (e) {
@@ -1010,6 +1014,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
             onEditSpeaker={editSpeaker}
             onReassign={isSolo ? undefined : reassign}
             onSaveText={saveText}
+            getEditBase={() => savedAtRender}
             rawText={(i) => transcript?.segments[i]?.text ?? ""}
             gaps={gaps}
             onPlayRange={playSample}

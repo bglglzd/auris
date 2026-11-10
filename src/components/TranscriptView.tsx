@@ -26,7 +26,8 @@ interface Props {
   onReassign?: (index: number, speaker: string | null, following: boolean) => void;
   /// Правка текста одной реплики прямо в ленте (пустой текст — удалить);
   /// `speaker` — выбранный говорящий для новой реплики.
-  onSaveText?: (index: number, text: string, speaker?: string) => void | boolean | Promise<void | boolean>;
+  onSaveText?: (index: number, text: string, speaker?: string, base?: Transcript | null) => void | boolean | Promise<void | boolean>;
+  getEditBase?: () => Transcript | null;
   /// Исходный (не цензурированный) текст реплики для правки.
   rawText?: (index: number) => string;
   /// Пропуски — паузы в тексте, где речь могла потеряться.
@@ -63,6 +64,7 @@ export function TranscriptView({
   onDeleteSegment,
   onReassign,
   onSaveText,
+  getEditBase,
   rawText,
   gaps = [],
   onPlayRange,
@@ -78,12 +80,14 @@ export function TranscriptView({
   const [savingInline, setSavingInline] = useState(false);
   const [inlineError, setInlineError] = useState("");
   const inlineSavePending = useRef(false);
+  const inlineBase = useRef<Transcript | null>(null);
   // Говорящий новой реплики (выбирается прямо в редакторе).
   const [inlineSpeaker, setInlineSpeaker] = useState<string | undefined>(undefined);
   const [busyGap, setBusyGap] = useState<number | null>(null);
   const openInline = (i: number, text: string) => {
     if (inlineSavePending.current) return;
     setInlineError("");
+    inlineBase.current = getEditBase?.() ?? null;
     setInlineAt(i);
     setInlineText(text);
     setInlineSpeaker(undefined);
@@ -94,7 +98,9 @@ export function TranscriptView({
     setSavingInline(true);
     setInlineError("");
     try {
-      const saved = await onSaveText?.(inlineAt, inlineText, inlineSpeaker);
+      const saved = getEditBase
+        ? await onSaveText?.(inlineAt, inlineText, inlineSpeaker, inlineBase.current)
+        : await onSaveText?.(inlineAt, inlineText, inlineSpeaker);
       if (saved !== false) setInlineAt(null);
       else setInlineError("Не удалось сохранить. Черновик оставлен на экране.");
     } catch {

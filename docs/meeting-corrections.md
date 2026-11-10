@@ -28,6 +28,8 @@ state and allows retry; inspect the texts before repeating a replacement.
 
 Manual transcript saves merge fields changed in the user's captured draft into
 the current saved transcript. Unrelated completed corrections are retained.
+The baseline is the saved file snapshot captured when editing opens, separate
+from unsaved manual-phrase placeholders in the UI.
 Conflicting edits or changed segment structure are rejected with the draft kept
 on screen. Report edits also reject a changed-on-disk base instead of silently
 overwriting it. Copy the draft before canceling and reopening a conflicting edit.

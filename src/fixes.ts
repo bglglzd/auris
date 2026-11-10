@@ -25,7 +25,7 @@ export function mergeFixes(current: Fix[], changes: Fix[]): Fix[] {
 }
 
 export function mergeTranscriptEdits(base: Transcript, edited: Transcript, current: Transcript): Transcript {
-  if (JSON.stringify(current) === JSON.stringify(base)) return edited;
+  if (JSON.stringify(current) === JSON.stringify(base)) return { ...current, ...edited };
   const conflict = () => new Error("Текст изменился во время правки. Черновик сохранён на экране; скопируйте правки и откройте актуальный текст заново.");
   if (base.segments.length !== current.segments.length || base.segments.length !== edited.segments.length) throw conflict();
   return { ...current, segments: base.segments.map((before, index) => {
