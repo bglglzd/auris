@@ -101,6 +101,22 @@ jobs:
             target/debug/bundle/nsis/BUILD-MANIFEST.json
           if-no-files-found: error
           retention-days: 7
+      - name: Installed Windows native import, local ASR and export acceptance
+        timeout-minutes: 30
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -LiteralPath target/debug/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'Missing native test installer' }
+          node scripts/native-acceptance.mjs $installer.FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain native acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: memiro-windows-native-acceptance
+          path: native-acceptance-results/
+          if-no-files-found: error
+          retention-days: 7
 
   # Диаризация на Windows по-настоящему: ONNX Runtime + модели + эталонная
   # запись pyannote (2 голоса). Проверяет рантайм там, где живут пользователи.

@@ -5,6 +5,9 @@ installers for every version are on [GitHub Releases](https://github.com/bglglzd
 
 ## Unreleased
 
+### Changed
+- Windows CI adds an installed-app import, local transcription and four-format export acceptance harness with synthetic audio. Documentation matches the current Russian-only recognition and the optional audio-upload boundary of server recognition.
+
 ### Fixed
 - Recording stop waits for both capture workers even after a worker panic. Available tracks are saved with capture warnings retained, and startup recovery preserves finished audio when a database insert or track rename was interrupted.
 - Recording controls refresh after failed actions and show errors. A failed resume preserves the paused recording; a manual stop suppresses automatic restart until the call detector observes the call end. Automatic start cannot toggle an already-started manual recording off.

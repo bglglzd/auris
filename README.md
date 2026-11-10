@@ -26,12 +26,12 @@
 
 ## Why Memiro AI
 
-Most meeting tools upload your conversations to someone else's cloud. Memiro keeps them on your machine: recording, speech recognition and speaker separation all run locally. AI features are optional and use **your own** OpenAI-compatible endpoint and key.
+Memiro stores recordings on your machine. Speech recognition and speaker separation run locally by default after model downloads. Optional AI features use **your own** OpenAI-compatible endpoint and key; selecting server recognition also sends audio to that endpoint. The current application UI and recognition language are Russian.
 
-- **Private by default** — audio, transcripts and reports never leave your computer.
+- **Private by default** — local recognition needs no AI account. Optional AI sends text, and optional server recognition sends audio, to the endpoint you configure.
 - **Native on Windows and Mac** — Apple Silicon and Intel Macs included; on macOS Memiro follows the platform's look and feel: translucent sidebar, SF font, menu bar, ⌘ shortcuts.
 - **Works with any app** — Zoom, Teams, Telegram, Discord, Google Meet, a browser tab: if you can hear it, Memiro can record it.
-- **Accurate Russian and 25 European languages** — NVIDIA Parakeet v3 runs on a regular CPU; Whisper covers every other language.
+- **Russian recognition** — the current version fixes recognition to Russian. NVIDIA Parakeet v3 runs on a CPU; Whisper is an alternative local engine.
 - **Knows who is speaking** — automatic speaker detection, even in group calls.
 - **From talk to action** — meeting summary, task table, conversation review, clean text, follow-up e-mail and a ready-made prompt for AI agents.
 
@@ -40,7 +40,7 @@ Most meeting tools upload your conversations to someone else's cloud. Memiro kee
 | | |
 |---|---|
 | ⏺ **Recording** | One button, tray / menu-bar icon or global hotkey (`Ctrl+Shift+R`, on Mac `⌘⇧R`). Two separate tracks — your microphone («Me») and system audio (the other side). Pause/resume, crash recovery, optional auto-recording when a call starts in a messenger (Windows). |
-| 📝 **Transcription** | Fully offline. Default engine: **NVIDIA Parakeet TDT 0.6B v3** — punctuation and casing, ~10× faster than real time on a CPU, no hallucinations on silence. **Whisper** (large-v3-turbo and others; GPU via Vulkan on Windows, Metal on Apple Silicon) for any other language. Models download once. |
+| 📝 **Transcription** | Russian, locally by default. **NVIDIA Parakeet TDT 0.6B v3** runs on a CPU; **Whisper** (large-v3-turbo and others) is an alternative, with Vulkan on Windows or Metal on Apple Silicon where supported. Models download once. Optional server recognition sends audio to your configured OpenAI-compatible endpoint. |
 | 🗣 **Voices** | Speaker diarization (pyannote segmentation-3.0 + WeSpeaker ResNet34 on ONNX Runtime) with automatic speaker count. Voices panel: talk-time share, ▶ voice sample, names, merge two voices into one, change the number of voices instantly — no re-transcription. |
 | ✦ **AI assistant** *(optional, your key)* | Auto title after transcription and six focused presets: **Meeting summary**, **Tasks** (who / what / when), **Conversation review**, **Clean text**, **Follow-up e-mail**, **AI agent brief** — a structured prompt for Claude, Cursor, ChatGPT and other agents. Ask any question about the meeting. Long meetings are handled chunk by chunk. |
 | ⬇ **Export** | One dialog: **Word (.docx)**, Markdown, plain text or **SRT subtitles** — transcript (with or without timestamps) plus any AI reports in a single document. |
@@ -82,10 +82,13 @@ Memiro's own sounds are excluded from the recording. Without the system-audio pe
 
 | Stays on your computer | Leaves your computer |
 |---|---|
-| Audio tracks, transcripts, speaker data, AI reports, settings and your API key | Only when you use AI: the transcript text of that meeting, sent to **the endpoint you configured** |
-| Speech recognition and speaker separation — offline after the one-time model download | Model downloads (GitHub / Hugging Face) and the update check (GitHub Releases) |
+| Recordings, transcripts, speaker data, saved reports and settings | Optional AI requests send meeting text/context and authenticate with your API key at **the endpoint you configured** |
+| Local speech recognition and speaker separation — offline after the one-time model download | Optional **server recognition** sends audio and authenticates at your configured endpoint; speaker separation stays local |
+| No telemetry or Memiro account | Model downloads (GitHub / Hugging Face) and the update check (GitHub Releases) |
 
 There is no telemetry and no account. Data lives in the app's data folder (`%APPDATA%` on Windows, `~/Library/Application Support` on macOS); deleting a meeting deletes its files.
+
+The Windows CI includes an [installed native import → local ASR → export journey](docs/native-acceptance.md) using synthetic audio and controlled file-picker paths. Its report records the exact source and installer digest; microphone capture and macOS GUI acceptance are separate.
 
 ## How it works
 
