@@ -23,9 +23,6 @@
   <a href="CONTRIBUTING.md">Участие</a>
 </p>
 
-<p align="center">
-  <img src="docs/screenshots/meeting-dark.png" width="860" alt="Встреча в Memiro: плеер, голоса и расшифровка" />
-</p>
 
 ## Зачем Memiro AI
 
@@ -50,14 +47,6 @@
 | ✂ **Аудио-редактор** | Волна громкости по дорожкам, вырезание лишнего, предпрослушивание; все дорожки и расшифровка сдвигаются синхронно; «Вернуть оригинал» в один клик. |
 | 🔄 **Обновления** | Подписанные обновления: Memiro сам находит новую версию, показывает «что нового» и ставит её с перезапуском только после вашего согласия. |
 
-<p align="center">
-  <img src="docs/screenshots/ai-dark.png" width="420" alt="ИИ-пресеты и отчёты" />
-  <img src="docs/screenshots/models-light.png" width="420" alt="Локальные модели: скачать один раз, работать офлайн" />
-</p>
-<p align="center">
-  <img src="docs/screenshots/export-dark.png" width="420" alt="Экспорт в Word, Markdown, текст или субтитры" />
-  <img src="docs/screenshots/meeting-light.png" width="420" alt="Светлая тема" />
-</p>
 
 ## Как начать
 

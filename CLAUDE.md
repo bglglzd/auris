@@ -434,7 +434,7 @@ npm run tauri dev -- --features whisper,diarize,opus,parakeet   # полное �
   `__TAURI_INTERNALS__`), до мержа.
 - `gh pr edit --base` ломается (GraphQL projectCards) → ретаргет базы через REST:
   `gh api -X PATCH repos/bglglzd/auris/pulls/N -f base=main`.
-- Git identity: `bglglzd <248948303+bglglzd@users.noreply.github.com>`; never use a personal email in public commits.
+- Keep commit attribution project-scoped and avoid publishing personal contact details.
 
 ---
 

@@ -63,7 +63,7 @@ export function MeetingEditDialog({ meeting, focus = "title", onSave, onCancel }
         <div className="field-row">
           <div className="field">
             <label htmlFor="em-part">Участники</label>
-            <input id="em-part" value={f.participants} onChange={set("participants")} placeholder="Иван, Анна" />
+            <input id="em-part" value={f.participants} onChange={set("participants")} placeholder="Участник Б, Участник А" />
           </div>
           <div className="field">
             <label htmlFor="em-topic">Тема</label>
