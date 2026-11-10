@@ -80,6 +80,41 @@ it("rejects an inline draft whose original text changed after editing opened", a
   expect(screen.getByDisplayValue("Manual conflicting")).toBeTruthy();
 });
 
+it("preserves saved phrases when a correction refresh removes an unsaved insertion", async () => {
+  const id = "insert-during-refresh";
+  let transcript = { segments: [segment("Alpha"), segment("Other", 2)] };
+  let saves = 0;
+  call.mockImplementation(async (command, args: any) => {
+    if (command === "get_transcript") return structuredClone(transcript);
+    if (command === "get_reports") return {};
+    if (command === "save_transcript") { saves++; transcript = structuredClone(args.transcript); }
+    if (command === "refine_pending") return { running: false, pending: 0 };
+    if (command === "has_voice_analysis" || command === "ai_correction_available") return false;
+    if (command === "track_path") return "synthetic.wav";
+  });
+  render(<MeetingView meeting={meeting(id)} onTranscribe={vi.fn()} onMetaSaved={vi.fn()} />);
+  await screen.findByRole("button", { name: "Редактировать расшифровку" });
+  await userEvent.click(screen.getAllByRole("button", { name: "Добавить реплику после этой" })[0]);
+  await userEvent.type(screen.getByPlaceholderText("Впишите, что слышно в записи…"), "New manual phrase");
+  await userEvent.click(screen.getByText("Сквозные исправления"));
+  await userEvent.type(screen.getByRole("textbox", { name: "Как написано" }), "Alpha");
+  await userEvent.type(screen.getByRole("textbox", { name: "Как правильно" }), "Correct");
+  await userEvent.click(screen.getByRole("button", { name: "Исправить везде" }));
+  await screen.findByRole("status");
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+  await userEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+  await screen.findByRole("alert");
+  expect(transcript.segments.map(item => item.text)).toEqual(["Correct", "Other"]);
+  expect(saves).toBe(1);
+  expect(screen.getByDisplayValue("New manual phrase")).toBeTruthy();
+  await userEvent.click(screen.getByRole("button", { name: "Отмена" }));
+  await userEvent.click(screen.getAllByRole("button", { name: "Добавить реплику после этой" })[0]);
+  await userEvent.type(screen.getByPlaceholderText("Впишите, что слышно в записи…"), "New manual phrase");
+  await userEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+  await waitFor(() => expect(transcript.segments.map(item => item.text)).toEqual(["Correct", "New manual phrase", "Other"]));
+  expect(saves).toBe(2);
+});
+
 it("preserves a pending correction while changing only the speaker", async () => {
   const id = "speaker-during-correction";
   let transcript = { segments: [segment("Alpha"), segment("Other", 2)] };

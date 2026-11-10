@@ -74,12 +74,17 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
 
   const [micUrl, setMicUrl] = useState("");
   const [sysUrl, setSysUrl] = useState("");
-  const [transcript, setTranscript] = useState<Transcript | null>(null);
+  const [transcript, setTranscriptState] = useState<Transcript | null>(null);
+  const uiTranscript = useRef<Transcript | null>(null);
+  const setTranscript = useCallback((value: Transcript | null) => {
+    uiTranscript.current = value;
+    setTranscriptState(value);
+  }, []);
   const savedTranscript = useRef<Transcript | null>(null);
   const setSavedTranscript = useCallback((value: Transcript | null) => {
     savedTranscript.current = value;
     setTranscript(value);
-  }, []);
+  }, [setTranscript]);
   // UI-only placeholders are not part of the file snapshot used for merging.
   const savedAtRender = savedTranscript.current;
   const [error, setError] = useState("");
@@ -482,10 +487,11 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
   const [why, setWhy] = useState<Record<string, string>>({});
   // Открыть правку новой реплики (кнопка в плеере).
   const [openRequest, setOpenRequest] = useState<{ index: number; nonce: number } | null>(null);
-  const saveText = async (i: number, text: string, speaker?: string, base?: Transcript | null) => {
-    if (!transcript) return false;
-    const before = transcript.segments[i];
-    const t = setSegmentText(transcript, i, text, speaker);
+  const saveText = async (i: number, text: string, speaker?: string, base?: Transcript | null, editSource?: Transcript | null) => {
+    const source = editSource ?? transcript;
+    if (!source || !source.segments[i]) return false;
+    const before = source.segments[i];
+    const t = setSegmentText(source, i, text, speaker);
     if (!await persist(t, base ?? savedAtRender)) return false;
     if (!before || !text.trim() || before.text.trim() === text.trim()) return true;
     const added = before.origin === "user" && !before.text.trim();
@@ -1015,6 +1021,7 @@ export function MeetingView({ meeting, transState, onTranscribe, onMetaSaved }: 
             onReassign={isSolo ? undefined : reassign}
             onSaveText={saveText}
             getEditBase={() => savedAtRender}
+            getEditDraft={() => uiTranscript.current}
             rawText={(i) => transcript?.segments[i]?.text ?? ""}
             gaps={gaps}
             onPlayRange={playSample}

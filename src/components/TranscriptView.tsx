@@ -26,8 +26,9 @@ interface Props {
   onReassign?: (index: number, speaker: string | null, following: boolean) => void;
   /// Правка текста одной реплики прямо в ленте (пустой текст — удалить);
   /// `speaker` — выбранный говорящий для новой реплики.
-  onSaveText?: (index: number, text: string, speaker?: string, base?: Transcript | null) => void | boolean | Promise<void | boolean>;
+  onSaveText?: (index: number, text: string, speaker?: string, base?: Transcript | null, source?: Transcript | null) => void | boolean | Promise<void | boolean>;
   getEditBase?: () => Transcript | null;
+  getEditDraft?: () => Transcript | null;
   /// Исходный (не цензурированный) текст реплики для правки.
   rawText?: (index: number) => string;
   /// Пропуски — паузы в тексте, где речь могла потеряться.
@@ -65,6 +66,7 @@ export function TranscriptView({
   onReassign,
   onSaveText,
   getEditBase,
+  getEditDraft,
   rawText,
   gaps = [],
   onPlayRange,
@@ -81,6 +83,7 @@ export function TranscriptView({
   const [inlineError, setInlineError] = useState("");
   const inlineSavePending = useRef(false);
   const inlineBase = useRef<Transcript | null>(null);
+  const inlineSource = useRef<Transcript | null>(null);
   // Говорящий новой реплики (выбирается прямо в редакторе).
   const [inlineSpeaker, setInlineSpeaker] = useState<string | undefined>(undefined);
   const [busyGap, setBusyGap] = useState<number | null>(null);
@@ -88,6 +91,7 @@ export function TranscriptView({
     if (inlineSavePending.current) return;
     setInlineError("");
     inlineBase.current = getEditBase?.() ?? null;
+    inlineSource.current = getEditDraft?.() ?? null;
     setInlineAt(i);
     setInlineText(text);
     setInlineSpeaker(undefined);
@@ -99,7 +103,7 @@ export function TranscriptView({
     setInlineError("");
     try {
       const saved = getEditBase
-        ? await onSaveText?.(inlineAt, inlineText, inlineSpeaker, inlineBase.current)
+        ? await onSaveText?.(inlineAt, inlineText, inlineSpeaker, inlineBase.current, inlineSource.current)
         : await onSaveText?.(inlineAt, inlineText, inlineSpeaker);
       if (saved !== false) setInlineAt(null);
       else setInlineError("Не удалось сохранить. Черновик оставлен на экране.");
