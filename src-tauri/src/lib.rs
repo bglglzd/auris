@@ -166,8 +166,8 @@ fn setup_mac_menu(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         name: Some("Memiro AI".into()),
         version: Some(app.package_info().version.to_string()),
         comments: Some("Память ваших встреч — локальная запись и расшифровка".into()),
-        website: Some("https://github.com/bglglzd/auris".into()),
-        website_label: Some("github.com/bglglzd/auris".into()),
+        website: Some("https://github.com/bglglzd/Memiro".into()),
+        website_label: Some("github.com/bglglzd/Memiro".into()),
         ..Default::default()
     };
     let settings = MenuItemBuilder::with_id("settings", "Настройки…")

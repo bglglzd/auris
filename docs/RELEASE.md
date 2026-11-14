@@ -32,7 +32,7 @@ notes and install it after the user agrees.
    ```bash
    gh run view <release-run-id> --json conclusion --jq .conclusion    # success
    gh release view vX.Y.Z --json isDraft,assets                        # setup.exe, .msi, .sig, latest.json
-   curl -sL https://github.com/bglglzd/auris/releases/latest/download/latest.json | grep version
+   curl -sL https://github.com/bglglzd/Memiro/releases/latest/download/latest.json | grep version
    ```
 
 The release notes (`notes` input or the release body) are what users see in the

@@ -41,7 +41,7 @@ describe("bug reports", () => {
     const d = emptyDraft({ title: "Не расшифровывается", what: "Ошибка модели", steps: "1. Нажал" });
     const { url, truncated } = issueUrl(d, env, "лог");
     const u = new URL(url);
-    expect(u.pathname).toBe("/bglglzd/auris/issues/new");
+    expect(u.pathname).toBe("/bglglzd/Memiro/issues/new");
     expect(u.searchParams.get("template")).toBe("app_report.yml");
     expect(u.searchParams.get("title")).toBe("[app] Не расшифровывается");
     expect(u.searchParams.get("what")).toBe("Ошибка модели");

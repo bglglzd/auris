@@ -18,7 +18,7 @@
 Продукт — **Memiro AI** («память ваших встреч»; до 0.10 продукт назывался иначе). `productName` — `Memiro AI`, exe — `Memiro.exe` (`mainBinaryName`), на Mac —
 `Memiro AI.app`, установщики — `Memiro.AI_x.y.z_…`. В тексте интерфейса — «Memiro»,
 формальное имя (окно, «О программе», установщик, заголовки) — «Memiro AI». Репозиторий
-пока `github.com/bglglzd/auris`. Несколько внутренних идентификаторов сохранили
+теперь `github.com/bglglzd/Memiro`. Несколько внутренних идентификаторов сохранили
 историческое значение и **менять их нельзя** — это сотрёт данные и настройки у
 пользователей:
 
@@ -32,7 +32,7 @@
 | NSIS-хук `src-tauri/windows/hooks.nsh` | удаляет программу под прежним именем после установки | иначе Memiro AI встаёт рядом со старой установкой (NSIS привязывает папку/ярлыки/«Программы» к `productName`) |
 
 Эти значения — только в коде; в пользовательской документации их не упоминать.
-Updater endpoint — `github.com/bglglzd/auris/releases/latest/download/latest.json`
+Updater endpoint — `github.com/bglglzd/Memiro/releases/latest/download/latest.json`
 (старые установки ходят на прежний адрес репозитория, GitHub перенаправляет).
 
 ---
@@ -433,7 +433,7 @@ npm run tauri dev -- --features whisper,diarize,opus,parakeet   # полное �
 - **Превью UI** — скриншоты в 800×600 и 1120×720, обе темы (Playwright + мок
   `__TAURI_INTERNALS__`), до мержа.
 - `gh pr edit --base` ломается (GraphQL projectCards) → ретаргет базы через REST:
-  `gh api -X PATCH repos/bglglzd/auris/pulls/N -f base=main`.
+  `gh api -X PATCH repos/bglglzd/Memiro/pulls/N -f base=main`.
 - Keep commit attribution project-scoped and avoid publishing personal contact details.
 
 ---
@@ -447,5 +447,5 @@ gh run list --workflow=ci.yml --branch <branch> --limit 1 --json databaseId --jq
 gh run view <id> --json conclusion --jq .conclusion         # проверка результата
 gh run list --workflow=release.yml --limit 3
 gh release view vX.Y.Z --json tagName,isDraft,assets
-gh api repos/bglglzd/auris/releases/latest --jq .tag_name
+gh api repos/bglglzd/Memiro/releases/latest --jq .tag_name
 ```

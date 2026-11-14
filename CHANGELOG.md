@@ -1,7 +1,7 @@
 # Changelog
 
 All notable changes to Memiro AI. Versions follow [Semantic Versioning](https://semver.org/);
-installers for every version are on [GitHub Releases](https://github.com/bglglzd/auris/releases).
+installers for every version are on [GitHub Releases](https://github.com/bglglzd/Memiro/releases).
 
 ## Unreleased
 
@@ -239,11 +239,11 @@ installers for every version are on [GitHub Releases](https://github.com/bglglzd
 ## Earlier
 - Two-track recording (microphone + system audio), local Whisper transcription, meeting library, import of external recordings, speaker diarization, AI summaries and questions via an OpenAI-compatible endpoint.
 
-[0.12.0]: https://github.com/bglglzd/auris/releases/tag/v0.12.0
-[0.11.0]: https://github.com/bglglzd/auris/releases/tag/v0.11.0
-[0.10.0]: https://github.com/bglglzd/auris/releases/tag/v0.10.0
-[0.9.0]: https://github.com/bglglzd/auris/releases/tag/v0.9.0
-[0.8.2]: https://github.com/bglglzd/auris/releases/tag/v0.8.2
-[0.8.1]: https://github.com/bglglzd/auris/releases/tag/v0.8.1
-[0.8.0]: https://github.com/bglglzd/auris/releases/tag/v0.8.0
-[0.7.1]: https://github.com/bglglzd/auris/releases/tag/v0.7.1
+[0.12.0]: https://github.com/bglglzd/Memiro/releases/tag/v0.12.0
+[0.11.0]: https://github.com/bglglzd/Memiro/releases/tag/v0.11.0
+[0.10.0]: https://github.com/bglglzd/Memiro/releases/tag/v0.10.0
+[0.9.0]: https://github.com/bglglzd/Memiro/releases/tag/v0.9.0
+[0.8.2]: https://github.com/bglglzd/Memiro/releases/tag/v0.8.2
+[0.8.1]: https://github.com/bglglzd/Memiro/releases/tag/v0.8.1
+[0.8.0]: https://github.com/bglglzd/Memiro/releases/tag/v0.8.0
+[0.7.1]: https://github.com/bglglzd/Memiro/releases/tag/v0.7.1

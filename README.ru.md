@@ -10,14 +10,14 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/bglglzd/auris/releases/latest"><img alt="Последний релиз" src="https://img.shields.io/github/v/release/bglglzd/auris?label=релиз&color=2e6fe0" /></a>
-  <a href="https://github.com/bglglzd/auris/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/bglglzd/auris/actions/workflows/ci.yml/badge.svg" /></a>
+  <a href="https://github.com/bglglzd/Memiro/releases/latest"><img alt="Последний релиз" src="https://img.shields.io/github/v/release/bglglzd/Memiro?label=релиз&color=2e6fe0" /></a>
+  <a href="https://github.com/bglglzd/Memiro/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/bglglzd/Memiro/actions/workflows/ci.yml/badge.svg" /></a>
   <img alt="Платформа" src="https://img.shields.io/badge/Windows%2010%2F11%20%C2%B7%20macOS%2013%2B-0fa8b8" />
   <a href="LICENSE"><img alt="Лицензия MIT" src="https://img.shields.io/badge/лицензия-MIT-7c5ce0" /></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/bglglzd/auris/releases/latest"><b>Скачать</b></a> ·
+  <a href="https://github.com/bglglzd/Memiro/releases/latest"><b>Скачать</b></a> ·
   <a href="README.md">English</a> ·
   <a href="CHANGELOG.md">Что нового</a> ·
   <a href="CONTRIBUTING.md">Участие</a>
@@ -50,7 +50,7 @@ Memiro хранит записи на вашем компьютере. Расп�
 
 ## Как начать
 
-1. Скачайте Memiro из [последнего релиза](https://github.com/bglglzd/auris/releases/latest):
+1. Скачайте Memiro из [последнего релиза](https://github.com/bglglzd/Memiro/releases/latest):
    - **Windows** — `Memiro.AI_x.y.z_x64-setup.exe`, запустите установщик.
    - **Mac на Apple Silicon** (M1 и новее) — `Memiro.AI_x.y.z_aarch64.dmg`; **Mac на Intel** — `Memiro.AI_x.y.z_x64.dmg`. Перетащите Memiro AI в «Программы». См. [первый запуск на macOS](#первый-запуск-на-macos).
 2. Во время звонка нажмите **Начать запись** (или `Ctrl+Shift+R` / `⌘⇧R`) — либо **Импорт записи** для готового файла (m4a, mp3, wav, ogg/opus, flac…).
@@ -157,11 +157,11 @@ docs/        порядок релиза, статус, скриншоты
 
 ## Нашли ошибку?
 
-Нажмите **«Сообщить об ошибке»** — значок 🐞 внизу боковой панели, *Настройки → Ошибки и диагностика*, меню в трее или *Справка → Сообщить об ошибке* на macOS. Опишите, что случилось; Memiro добавит версию, систему и журнал диагностики без личных данных (без ключей API, имён пользователя в путях и текста встреч — что именно уйдёт, видно до отправки). Отчёт открывается готовым [issue на GitHub](https://github.com/bglglzd/auris/issues); без аккаунта GitHub его можно скопировать или сохранить файлом. Ошибки разбираются и исправляются по плану, исправления приходят обновлением. У сообщений об ошибках в приложении есть ссылка «Сообщить об ошибке» — она сразу заполняет форму.
+Нажмите **«Сообщить об ошибке»** — значок 🐞 внизу боковой панели, *Настройки → Ошибки и диагностика*, меню в трее или *Справка → Сообщить об ошибке* на macOS. Опишите, что случилось; Memiro добавит версию, систему и журнал диагностики без личных данных (без ключей API, имён пользователя в путях и текста встреч — что именно уйдёт, видно до отправки). Отчёт открывается готовым [issue на GitHub](https://github.com/bglglzd/Memiro/issues); без аккаунта GitHub его можно скопировать или сохранить файлом. Ошибки разбираются и исправляются по плану, исправления приходят обновлением. У сообщений об ошибках в приложении есть ссылка «Сообщить об ошибке» — она сразу заполняет форму.
 
 ## Релизы
 
-Каждый релиз подписывается и публикуется в [GitHub Releases](https://github.com/bglglzd/auris/releases) вместе с `latest.json` для обновления из приложения. Что изменилось — в [CHANGELOG.md](CHANGELOG.md), как выпускать — в [docs/RELEASE.md](docs/RELEASE.md).
+Каждый релиз подписывается и публикуется в [GitHub Releases](https://github.com/bglglzd/Memiro/releases) вместе с `latest.json` для обновления из приложения. Что изменилось — в [CHANGELOG.md](CHANGELOG.md), как выпускать — в [docs/RELEASE.md](docs/RELEASE.md).
 
 ## Участие и безопасность
 
