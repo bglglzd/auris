@@ -3,7 +3,7 @@
 > Release history lives in [CHANGELOG.md](../CHANGELOG.md). This page tracks what is
 > verified, what still needs real-world testing and what is planned.
 
-**Latest release:** see [GitHub Releases](https://github.com/bglglzd/auris/releases/latest).
+**Latest release:** see [GitHub Releases](https://github.com/bglglzd/Memiro/releases/latest).
 
 ## Verified automatically (CI)
 

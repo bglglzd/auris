@@ -10,14 +10,14 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/bglglzd/auris/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/bglglzd/auris?label=release&color=2e6fe0" /></a>
-  <a href="https://github.com/bglglzd/auris/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/bglglzd/auris/actions/workflows/ci.yml/badge.svg" /></a>
+  <a href="https://github.com/bglglzd/Memiro/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/bglglzd/Memiro?label=release&color=2e6fe0" /></a>
+  <a href="https://github.com/bglglzd/Memiro/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/bglglzd/Memiro/actions/workflows/ci.yml/badge.svg" /></a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%2F11%20%C2%B7%20macOS%2013%2B-0fa8b8" />
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-7c5ce0" /></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/bglglzd/auris/releases/latest"><b>Download</b></a> ·
+  <a href="https://github.com/bglglzd/Memiro/releases/latest"><b>Download</b></a> ·
   <a href="README.ru.md">Русский</a> ·
   <a href="CHANGELOG.md">Changelog</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
@@ -50,7 +50,7 @@ Memiro stores recordings on your machine. Speech recognition and speaker separat
 
 ## Get started
 
-1. Download Memiro from the [latest release](https://github.com/bglglzd/auris/releases/latest):
+1. Download Memiro from the [latest release](https://github.com/bglglzd/Memiro/releases/latest):
    - **Windows** — `Memiro.AI_x.y.z_x64-setup.exe`, run the installer.
    - **Mac with Apple Silicon** (M1 and newer) — `Memiro.AI_x.y.z_aarch64.dmg`; **Intel Mac** — `Memiro.AI_x.y.z_x64.dmg`. Drag Memiro AI to *Applications*. See [first launch on macOS](#first-launch-on-macos).
 2. Press **Start recording** (or `Ctrl+Shift+R` / `⌘⇧R`) during a call, or **Import** an existing audio file (m4a, mp3, wav, ogg/opus, flac…).
@@ -58,6 +58,10 @@ Memiro stores recordings on your machine. Speech recognition and speaker separat
 4. *(Optional)* In **Settings → Artificial intelligence** enter an OpenAI-compatible base URL, API key and model — OpenAI, OpenRouter, a local Ollama / LM Studio / llama.cpp server, anything compatible. Memiro will then title the meeting and prepare a summary automatically.
 
 > Please follow the call-recording consent laws that apply to you and to everyone on the call.
+
+### Ubuntu (amd64)
+
+Download and extract the **Memiro-Ubuntu-amd64** artifact from a successful [Ubuntu package build](https://github.com/bglglzd/Memiro/actions/workflows/ubuntu.yml). Install the package with `sudo apt install ./<filename>.deb`. This build supports audio file import and CPU Whisper transcription. Live capture, speaker diarization and Parakeet are unavailable.
 
 ### First launch on macOS
 
@@ -157,11 +161,11 @@ docs/        release runbook, status, screenshots
 
 ## Found a bug?
 
-Use **Report a bug** — the 🐞 button at the bottom of the sidebar, *Settings → Errors and diagnostics*, the tray menu, or *Help → Report a bug* on macOS. Describe what happened; Memiro adds the version, the system and a diagnostic log with personal data removed (no API keys, no user names in paths, no meeting text — you can see exactly what is sent). The report opens as a ready-to-submit [GitHub issue](https://github.com/bglglzd/auris/issues); without a GitHub account you can copy it or save it as a file. Reports are triaged and fixed on a regular schedule, and fixes arrive as updates. Error messages in the app have a «Report a bug» link that pre-fills the form.
+Use **Report a bug** — the 🐞 button at the bottom of the sidebar, *Settings → Errors and diagnostics*, the tray menu, or *Help → Report a bug* on macOS. Describe what happened; Memiro adds the version, the system and a diagnostic log with personal data removed (no API keys, no user names in paths, no meeting text — you can see exactly what is sent). The report opens as a ready-to-submit [GitHub issue](https://github.com/bglglzd/Memiro/issues); without a GitHub account you can copy it or save it as a file. Reports are triaged and fixed on a regular schedule, and fixes arrive as updates. Error messages in the app have a «Report a bug» link that pre-fills the form.
 
 ## Releases
 
-Every release is signed and published on [GitHub Releases](https://github.com/bglglzd/auris/releases) together with `latest.json` for in-app updates. See [CHANGELOG.md](CHANGELOG.md) for what changed and [docs/RELEASE.md](docs/RELEASE.md) for the release process.
+Every release is signed and published on [GitHub Releases](https://github.com/bglglzd/Memiro/releases) together with `latest.json` for in-app updates. See [CHANGELOG.md](CHANGELOG.md) for what changed and [docs/RELEASE.md](docs/RELEASE.md) for the release process.
 
 ## Contributing & security
 

@@ -13,7 +13,7 @@ so please update before reporting.
 ## Reporting a vulnerability
 
 Please do not disclose vulnerabilities in a public issue. Use
-[GitHub private vulnerability reporting](https://github.com/bglglzd/auris/security/advisories/new)
+[GitHub private vulnerability reporting](https://github.com/bglglzd/Memiro/security/advisories/new)
 with a description, reproduction steps and affected versions. Do not include real API
 keys, private audio or unredacted transcripts.
 

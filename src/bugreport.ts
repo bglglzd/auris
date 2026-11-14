@@ -6,7 +6,7 @@
 /// Диагностика очищается от личного: путей с именем пользователя, ключей API,
 /// токенов, e-mail. Текст встреч в отчёт не попадает.
 
-export const ISSUES_REPO = "https://github.com/bglglzd/auris";
+export const ISSUES_REPO = "https://github.com/bglglzd/Memiro";
 export const REPORT_TEMPLATE = "app_report.yml";
 /// GitHub отвечает 414 на очень длинные ссылки — держим запас.
 export const MAX_URL = 7600;
