@@ -17,9 +17,9 @@ jobs:
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
-      - run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libclang-dev cmake
+      - run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libclang-dev libopus-dev cmake
       - run: npm ci
-      - run: npm run tauri build -- --bundles deb --features whisper,opus --config '{"bundle":{"createUpdaterArtifacts":false}}'
+      - run: npm run tauri build -- --bundles deb --features whisper,opus
       - name: Inspect Debian package
         run: dpkg-deb --info target/release/bundle/deb/*.deb
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
