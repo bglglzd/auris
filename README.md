@@ -59,6 +59,10 @@ Memiro stores recordings on your machine. Speech recognition and speaker separat
 
 > Please follow the call-recording consent laws that apply to you and to everyone on the call.
 
+### Ubuntu (amd64)
+
+Download and extract the **Memiro-Ubuntu-amd64** artifact from a successful [Ubuntu package build](https://github.com/bglglzd/Memiro/actions/workflows/ubuntu.yml). Install the package with `sudo apt install ./<filename>.deb`. This build supports audio file import and CPU Whisper transcription. Live capture, speaker diarization and Parakeet are unavailable.
+
 ### First launch on macOS
 
 Memiro for Mac is not yet notarized by Apple, so the first time macOS will say it can't verify the developer:

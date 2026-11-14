@@ -6,8 +6,26 @@ use commands::AppState;
 use uxo_core::recorder::Recorder;
 use uxo_core::storage::Repo;
 
-/// Выбирает рекордер: WASAPI на Windows, CoreAudio + ScreenCaptureKit на
-/// macOS, иначе — мок (тишина).
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+struct UnavailableRecorder;
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+impl Recorder for UnavailableRecorder {
+    fn start(&self, _: &std::path::Path, _: &std::path::Path) -> uxo_core::error::AppResult<()> {
+        Err(uxo_core::error::AppError::Audio(
+            "Live capture is unavailable on this platform. Import an audio file instead.".into(),
+        ))
+    }
+
+    fn stop(&self) -> uxo_core::error::AppResult<uxo_core::recorder::RecordingResult> {
+        Err(uxo_core::error::AppError::InvalidState("not recording".into()))
+    }
+
+    fn is_recording(&self) -> bool {
+        false
+    }
+}
+
 fn build_recorder() -> Box<dyn Recorder> {
     #[cfg(target_os = "windows")]
     {
@@ -19,7 +37,7 @@ fn build_recorder() -> Box<dyn Recorder> {
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
-        Box::new(uxo_core::recorder::MockRecorder::new(5))
+        Box::new(UnavailableRecorder)
     }
 }
 
